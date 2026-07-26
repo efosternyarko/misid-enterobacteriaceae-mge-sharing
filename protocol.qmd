@@ -813,10 +813,6 @@ with open(out_fasta, "w") as out:
 print("Done. Sequences written to", out_fasta)
 ```
 
-::: {.callout-note}
-**Isolate-name matching fixed and confirmed 2026-07-26.** The original supplied version had `if isolate_base in d:`, checking whether the *longer* ICEfinder2 result directory name (which retains the `_chromosome_merged` suffix from the merge step, e.g. `EC_E18_Ecoli_chromosome_merged`) is contained within the *shorter* `01_mob_recon/` directory name (e.g. `EC_E18_Ecoli`) — a containment check that can never succeed, since a longer string cannot be a substring of a shorter one. Confirmed directly against real output on CLIMB (`ls 01_mob_recon/` vs `ls ICEfinder2_linux/result/`): the mob_recon directories are exactly the ICEfinder2 directory names with `_chromosome_merged` stripped off the end. Corrected to `if d in isolate_base:` (does the short mob_recon name appear within the long ICEfinder2 name — the direction that actually matches).
-:::
-
 ## Step 4: Pairwise BLAST comparison of ICE sequences
 
 Identify shared ICEs across species at ≥95% nucleotide identity and ≥80% query coverage:
