@@ -1,0 +1,28 @@
+# Notes for review before this repository is made public
+
+Built by consolidating four standalone code-dump files (`Section 0 + Section 1 Code.txt`, `Section 2 Code.txt`, `Section 3 Addendum Code.txt`, `Section 4 Code.txt`) with the existing official protocol (`Section3_plasmid_ICE_sharing_protocol_15Jun26.qmd`, v2.0/2.1) and the bug-fix history from the Grace/Ronnie email exchanges. Please check the following before treating this as final.
+
+## How the sections were reconciled
+
+- The standalone code-dump files use their own section numbering (e.g. "Section 0 + Section 1", "Section 2", "3.7.1–3.7.3 Addendum", "Section 4") that only partially overlaps with the existing protocol's numbering (which is scoped specifically to "Section 3: Inter-Species Plasmid and ICE Sharing Analysis", Steps 1–7).
+- I treated the existing protocol's Steps 1–7 as the backbone for the MGE-sharing network section (it is the more detailed, already-refined version of that specific analysis), and folded the "Section 3 Addendum" content (plasmid-borne ARG confirmation, resistome heatmap) in as new Steps 8–9 immediately after it, since the addendum explicitly extends Step 2/Step 7's output rather than replacing anything.
+- The surrounding pipeline stages (QC/species ID/MLST/annotation from "Section 0+1", AMR/plasmid typing from "Section 2", virulence characterisation from "Section 4") had no existing formal protocol document, so they're reproduced directly from the code dumps as Sections 0/1/2/4, wrapped around the existing Section 3 backbone.
+- **This renumbering is my synthesis, not something either of you confirmed** — worth checking the overall flow reads correctly end-to-end, particularly whether Section 4 (virulence) genuinely belongs after Section 3 (MGE sharing) in the actual order Ronnie ran things, or whether some of it happened earlier/in parallel.
+
+## Fixes applied (from the established email-exchange history)
+
+1. **Duplicate node bug** in `build_inter_species_network.R` — ICE-derived isolate labels retained suffix cruft not present in `mobtyper`-derived labels, creating phantom duplicate nodes. Fixed with a shared `normalise_isolate()` helper.
+2. **Legend label mismatch** in the same script — `scale_edge_colour_manual(labels = ...)` used an unnamed positional vector; fixed with a named vector.
+3. **IntegronFinder isolate-name parsing** in `integron_finder_and_combine.sh` — original used a single `basename(dirname(...))`, which returns IntegronFinder's own results subdirectory name rather than the isolate name (IntegronFinder nests its own subdirectory inside whatever `--outdir` is given). Fixed with `find` + double-`dirname`, output renamed `all_integrons_combined_clean.tsv`.
+4. **Step 7 summary table placeholder path and column names** — original referenced an unfilled `"path/to/amrfinderplus_all_isolates.tsv"` placeholder and joined on `gene_symbol`/`sequence_name` (snake_case, not real AMRFinderPlus column names). Added `aggregate_amr_filtered.sh` to produce a real combined AMR file from `05_amr_filtered/`, and corrected the join to use `` `Gene symbol` ``/`` `Sequence name` `` (the actual AMRFinderPlus output column names, with spaces).
+
+## Flagged but NOT changed — needs your verification
+
+- **`extract_ice_sequences.py`'s isolate-name matching looks backwards.** The line `if isolate_base in d:` checks whether the ICEfinder2 result directory name (which is *longer* — it retains the `_chromosome_merged` suffix from the chromosome-merging step) is contained *within* a shorter `01_mob_recon/` directory name. As written, this containment check would not succeed as a normal substring match in the direction described. I did not "fix" this because I'm not certain of ICEfinder2's actual internal directory-naming behaviour without seeing real output, and I didn't want to introduce a different, unverified bug on top of an existing one I might be misreading. **Please check this against real ICEfinder2 output before relying on the ICE BLAST/network results** — if it's genuinely backwards, ICE sequence extraction may be silently producing far fewer isolate matches than expected (every isolate printing the "WARNING: chromosome not found" line would reveal this immediately).
+- **Output filenames changed**: the resistome heatmap and iron/virulome heatmap scripts originally wrote to `Hongkong_combined_resistome.pdf` and `Hongkong_iron_heatmap.pdf`. Given the project is set in Southern Ghana, I assumed this was a leftover filename from a template/another project and renamed the outputs to `Ghana_combined_resistome.pdf` and `Ghana_ecoli_iron_heatmap.pdf`. **Please confirm this assumption is correct** — if "Hongkong" was actually intentional (e.g. a co-investigator or comparison dataset), revert the filenames.
+- **`05_amr` column positions in `amr_qc_filter.sh`** (`$13` Method, `$16` % Coverage, `$17` % Identity) are taken as-is from the working code supplied — I did not independently re-verify these against a live AMRFinderPlus TSV header for this specific version. Worth a quick `head -1 05_amr/<isolate>_amr.tsv | tr '\t' '\n' | cat -n` check before trusting this filter blindly, especially if AMRFinderPlus gets upgraded.
+- Species-organism mapping (`metadata/species_organism_map.tsv` in Section 2) is described as manually curated but the actual file contents weren't in any of the supplied code — the protocol notes this must be created by hand, but the specific isolate→organism assignments aren't reproduced anywhere in this repo.
+
+## Rendering
+
+Quarto is available on this machine (`/usr/local/bin/quarto`) — `quarto render protocol.qmd` was run to confirm the document builds; see the accompanying commit for whether `protocol.html` is included.

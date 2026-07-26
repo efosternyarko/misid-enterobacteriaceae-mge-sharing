@@ -1,0 +1,1841 @@
+---
+title: "Genomic Characterisation of Misidentified Clinical Enterobacteriaceae: Inter-Species Mobile Genetic Element Sharing"
+subtitle: "Full analysis protocol, Southern Ghana tertiary hospitals"
+author: "Cheuk Kiu Liu (Ronnie) · Supervisor: Dr E. Foster-Nyarko"
+date: "26 July 2026"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Contents"
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    theme: flatly
+    highlight-style: github
+    embed-resources: true
+    smooth-scroll: true
+    df-print: kable
+execute:
+  eval: false
+  echo: true
+---
+
+::: {.callout-note}
+**Protocol v1.0 (consolidated).** This document combines the full pipeline — assembly QC and species re-identification, typing and annotation, AMR/plasmid detection, the inter-species MGE-sharing network analysis, plasmid-borne ARG confirmation, and species-specific virulence characterisation — into one citable reference. It supersedes the individual section documents/code dumps it was built from; see `NOTES_FOR_REVIEW.md` in this repository for how they were reconciled.
+:::
+
+## Overview
+
+This project investigates a set of clinical Enterobacteriaceae isolates from Southern Ghana that were **misidentified** at the point of initial species assignment. After correcting species identity via contig-level Kraken2 classification, the confirmed dataset comprises:
+
+- **15 *Escherichia coli***
+- **6 *Klebsiella quasipneumoniae***
+- **2 *Klebsiella variicola***
+
+These 23 isolates are analysed together with the **103 *K. pneumoniae*** assemblies from Mills et al. 2024, giving a combined working dataset of **126 isolates**. The central, novel analysis (@sec-mge-sharing) asks whether plasmids and integrative conjugative elements (ICEs) are shared across species boundaries within the same hospital environment, and whether any elements are shared with the wider Mills et al. 2024 *K. pneumoniae* population.
+
+**Expected outputs:** corrected species identities and assembly QC metrics; MLST/annotation for all isolates; per-isolate AMR and plasmid profiles; a network figure and summary table of inter-species MGE sharing; a resistome heatmap distinguishing intrinsic, chromosomal, and plasmid-mediated resistance; and species-specific virulence characterisation (*E. coli* pathotyping, O:H serotyping, K-locus typing; KpSC Kleborate typing).
+
+---
+
+# Section 0: Prerequisites {#sec-prereqs}
+
+## Environment set-up
+
+Four separate conda environments are needed, each with its own dependency constraints:
+
+```{.bash filename="scripts/00_environment_setup.sh"}
+#!/bin/bash
+# Conda environment setup and project directory structure.
+# Run once when setting up a fresh working environment.
+
+# --- misid_ecoli: main environment for QC, typing, annotation, AMR/plasmid tools ---
+conda create -n misid_ecoli python=3.11
+conda activate misid_ecoli
+conda install -c bioconda -c conda-forge \
+  mash kraken2 mlst prokka bakta amrfinderplus \
+  kaptive kleborate virulencefinder \
+  chewbbaca blast fastp
+conda install -c bioconda -c conda-forge mob_suite "pandas<2.0"
+conda install -c bioconda -c conda-forge ncbi-datasets-cli jq
+
+# --- checkm2_py312: CheckM2 needs a newer Python than the main environment ---
+conda create -n checkm2_py312 -c bioconda -c conda-forge python=3.12 checkm2 kraken2 krakentools
+conda activate checkm2_py312
+checkm2 database --setdblocation /home/jovyan/shared-team/ronnie.dir/checkm2_db/CheckM2_database/uniref100.KO.1.dmnd
+checkm2 testrun
+
+# --- ectyper_env: ECTyper has its own dependency constraints ---
+conda create -n ectyper_env -c bioconda -c conda-forge python=3.10 ectyper
+
+# --- icefinder2_env: ICEfinder2 and its dependencies ---
+conda create -n icefinder2_env -c bioconda -c conda-forge python=3.8 \
+    hmmer blast kraken2 seqkit prodigal prokka \
+    macsyfinder defense-finder biopython ete3
+conda activate icefinder2_env
+# download and extract ICEfinder2.1 from https://github.com/EBI-Metagenomics/icefinder2/
+tar -xvzf ICEfinder2.1_linux.tar.gz
+# find the paths for config.ini
+which hmmsearch
+which blastn
+which blastp
+which kraken2
+which seqkit
+which prodigal
+which prokka
+which defense-finder
+which macsyfinder
+# edit config.ini by completing the absolute paths to tools identified above
+nano config.ini
+# BioPython >= 1.80 removed Bio.SeqUtils.GC, which ICEfinder2 uses internally --
+# downgrade before running ICEfinder2 (see merge_misidentified_chromosomes.sh)
+conda install -c conda-forge biopython=1.79 -y
+
+# --- Project directory structure ---
+mkdir -p 00_assemblies 01_qc 02_species 03_annotation 04_mlst 05_amr \
+    06_plasmids 07_mge_sharing 08_virulence 09_phylogeny 10_figures \
+    11_excluded_assemblies
+```
+
+::: {.callout-important}
+**ICEfinder2 requires BioPython 1.79 specifically.** BioPython ≥ 1.80 removed `Bio.SeqUtils.GC`, which ICEfinder2 uses internally. This is installed at the end of the environment setup script above, but if you re-create the `icefinder2_env` environment later, downgrade BioPython again before running anything in @sec-mge-sharing.
+:::
+
+## Directory structure
+
+The environment setup script also creates the working directory structure (`00_assemblies/` through `11_excluded_assemblies/`). Populate `00_assemblies/` with all isolate FASTA files before proceeding.
+
+---
+
+# Section 1: Assembly QC and Species Confirmation {#sec-qc}
+
+## Assembly quality control (CheckM2)
+
+```bash
+conda activate checkm2_py312
+checkm2 predict --threads 8 \
+  --input 00_assemblies/ \
+  --output-directory 01_qc/ \
+  --extension fasta
+```
+
+Flag: completeness < 90% or contamination > 5%.
+
+Exclude highly contaminated assemblies (>50%) outright:
+
+```bash
+mv 00_assemblies/{C8,R9,R12,K10,K14,K27}.fasta 11_excluded_assemblies/
+```
+
+## Decontamination and species re-identification
+
+::: {.callout-important}
+**This step uncovered the project's central methodological finding: several isolates were misidentified, not just contaminated.** The first decontamination pass targets each contig's Kraken2-assigned taxon against the *original* species label. Reviewing the resulting Kraken2 reports showed that for five samples, the majority of contigs actually belonged to a completely different, dominant organism — meaning the original species call itself was wrong, and a second, corrected re-identification pass was required.
+:::
+
+Download a Kraken2 database once:
+
+```bash
+mkdir 00_assemblies/01_kraken2_db
+cd 00_assemblies/01_kraken2_db
+wget https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08gb_20240904.tar.gz
+tar -xvzf k2_standard_08gb_20240904.tar.gz
+cd ..
+```
+
+**First pass — decontaminate using the original species labels as target taxids:**
+
+```{.bash filename="scripts/run_kraken2_decontam.sh"}
+#!/bin/bash
+
+# Decontaminate assemblies using Kraken2 contig-level classification
+# Usage: bash run_kraken2_decontam.sh
+# Place this script in the same directory as Ronnie_genomes/
+#
+# Requires:
+#   - kraken2 (conda install -c bioconda kraken2)
+#   - krakentools (pip install krakentools)
+#   - checkm2 (for post-filtering QC)
+#   - A Kraken2 database (standard or k2_standard); update KRAKEN2_DB below
+
+GENOME_DIR="Ronnie_genomes"
+KRAKEN2_DB="/path/to/kraken2_db"    # <- UPDATE THIS
+KRAKEN2_OUT_DIR="02_kraken2"
+FILTERED_DIR="03_filtered_assemblies"
+CHECKM2_OUT_DIR="04_qc_filtered"
+THREADS=8
+
+# Contaminated samples to attempt rescue (contamination 5-50%)
+# Heavily contaminated samples excluded (C8 104%, R9 101%, R12 99%, K10 88%, K14 84%, K27 56%)
+declare -A TARGET_TAXIDS=(
+    ["C49"]="562"       # Escherichia coli
+    ["R16"]="562"
+    ["R2"]="562"
+    ["R17"]="1463165"   # Klebsiella quasipneumoniae
+    ["C25"]="548"       # Klebsiella aerogenes
+)
+
+mkdir -p "$KRAKEN2_OUT_DIR" "$FILTERED_DIR"
+
+for sample in "${!TARGET_TAXIDS[@]}"; do
+    # Find the assembly across species subdirectories
+    assembly=$(find "$GENOME_DIR" -name "${sample}.fasta" | head -1)
+    if [[ -z "$assembly" ]]; then
+        echo "WARNING: no assembly found for $sample, skipping"
+        continue
+    fi
+
+    target_taxid="${TARGET_TAXIDS[$sample]}"
+
+    echo "Running Kraken2 on $sample (target taxid: $target_taxid)..."
+    kraken2 --db "$KRAKEN2_DB" \
+        --threads "$THREADS" \
+        --output "${KRAKEN2_OUT_DIR}/${sample}.out" \
+        --report "${KRAKEN2_OUT_DIR}/${sample}_report.txt" \
+        "$assembly"
+
+    echo "Extracting reads matching target taxid $target_taxid for $sample..."
+    extract_kraken_reads.py \
+        -k "${KRAKEN2_OUT_DIR}/${sample}.out" \
+        -s "$assembly" \
+        -o "${FILTERED_DIR}/${sample}.fasta" \
+        -t "$target_taxid" \
+        --include-children \
+        --report "${KRAKEN2_OUT_DIR}/${sample}_report.txt"
+
+    echo "Done: $sample"
+done
+
+echo "Running CheckM2 on decontaminated assemblies..."
+checkm2 predict --threads "$THREADS" \
+    --input "$FILTERED_DIR/" \
+    --output-directory "$CHECKM2_OUT_DIR/" \
+    --extension fasta
+
+echo "All done. Review $CHECKM2_OUT_DIR/quality_report.tsv before proceeding."
+```
+
+Result: Kraken2 removed the majority of contigs for several samples, revealing that the *actual* dominant organism was *K. pneumoniae* or *Proteus*, not the originally recorded species.
+
+**Second pass — re-identify using the corrected dominant-organism taxids:**
+
+```{.bash filename="scripts/run_kraken2_reidentify.sh"}
+#!/bin/bash
+
+# Re-identify and re-filter assemblies after discovering the initial Kraken2
+# decontamination pass targeted the WRONG dominant organism for several
+# samples (they were misidentified in the original species label, not just
+# contaminated). Usage: bash run_kraken2_reidentify.sh
+# Run only after run_kraken2_decontam.sh and after inspecting its Kraken2
+# reports to confirm the true dominant taxon per sample.
+
+GENOME_DIR="Ronnie_genomes"
+KRAKEN2_DB="/path/to/kraken2_db"    # <- UPDATE THIS
+KRAKEN2_OUT_DIR="02_kraken2"
+FILTERED_DIR="03_filtered_assemblies"
+CHECKM2_OUT_DIR="04_qc_filtered"
+THREADS=8
+
+# Kraken2 reports show these samples are MISIDENTIFIED, not just contaminated.
+# Target taxids updated to the DOMINANT organism in each assembly.
+# Previous labels -> True dominant organism:
+#   C49  E. coli          -> Klebsiella (85% K. pneumoniae)
+#   R16  E. coli          -> Klebsiella (88% K. pneumoniae)
+#   R2   E. coli          -> Klebsiella (94% K. variicola)
+#   R17  K. quasipneumoniae -> Proteus mirabilis (88%)
+#   C25  K. aerogenes     -> Klebsiella (80% K. pneumoniae dominant)
+declare -A TARGET_TAXIDS=(
+    ["C49"]="570"    # Klebsiella genus (--include-children captures K. pneumoniae + all strains)
+    ["R16"]="570"    # Klebsiella genus
+    ["R2"]="570"     # Klebsiella genus (K. variicola dominant)
+    ["R17"]="583"    # Proteus genus (--include-children captures P. mirabilis)
+    ["C25"]="570"    # Klebsiella genus
+)
+
+mkdir -p "$KRAKEN2_OUT_DIR" "$FILTERED_DIR"
+
+for sample in "${!TARGET_TAXIDS[@]}"; do
+    assembly=$(find "$GENOME_DIR" -name "${sample}.fasta" | head -1)
+    if [[ -z "$assembly" ]]; then
+        echo "WARNING: no assembly found for $sample, skipping"
+        continue
+    fi
+
+    target_taxid="${TARGET_TAXIDS[$sample]}"
+
+    echo "Re-extracting $sample against corrected target taxid $target_taxid..."
+    extract_kraken_reads.py \
+        -k "${KRAKEN2_OUT_DIR}/${sample}.out" \
+        -s "$assembly" \
+        -o "${FILTERED_DIR}/${sample}.fasta" \
+        -t "$target_taxid" \
+        --include-children \
+        --report "${KRAKEN2_OUT_DIR}/${sample}_report.txt"
+
+    echo "Done: $sample"
+done
+
+echo "Running CheckM2 on re-identified assemblies..."
+checkm2 predict --threads "$THREADS" \
+    --input "$FILTERED_DIR/" \
+    --output-directory "$CHECKM2_OUT_DIR/" \
+    --extension fasta
+
+echo "All done. Four assemblies (C49, R16, R17, R2) are expected to still show"
+echo "completeness < 90%; C25 needs a further species-specific re-filter (see protocol.qmd)."
+```
+
+| Isolate | Original label | True dominant organism |
+|---|---|---|
+| C49 | *E. coli* | *Klebsiella* (85% *K. pneumoniae*) |
+| R16 | *E. coli* | *Klebsiella* (88% *K. pneumoniae*) |
+| R2 | *E. coli* | *Klebsiella* (94% *K. variicola*) |
+| R17 | *K. quasipneumoniae* | *Proteus mirabilis* (88%) |
+| C25 | *K. aerogenes* | *Klebsiella* (80% *K. pneumoniae* dominant) |
+
+Result: four assemblies (C49, R16, R17, R2) still show completeness < 90% after re-identification; C25 reaches 100% completeness but 12.58% contamination.
+
+**Re-filter C25 specifically using the *K. pneumoniae* species-level taxid (573):**
+
+```bash
+extract_kraken_reads.py \
+    -k 02_kraken2/C25.out \
+    -s ./C25.fasta \
+    -o 03_filtered_assemblies/C25.fasta \
+    -t 573 \
+    --include-children \
+    --report 02_kraken2/C25_report.txt
+
+checkm2 predict \
+    --threads 8 \
+    --input 03_filtered_assemblies/C25.fasta \
+    --output-directory 04_qc_filtered_C25
+```
+
+Result: completeness of only 7.37% — not rescuable. Exclude C25 along with the other four:
+
+```bash
+mv C25.fasta C49.fasta R16.fasta R17.fasta R2.fasta ../11_excluded_assemblies/
+```
+
+## Species confirmation with Mash
+
+```{.bash filename="scripts/species_confirmation_mash.sh"}
+#!/bin/bash
+# Species confirmation via Mash distance against the RefSeq sketch database.
+# Run from the project root with the misid_ecoli conda environment active.
+
+conda activate misid_ecoli
+
+# Sketch all assemblies
+mash sketch -o 02_species/sketch 00_assemblies/*fasta
+cd 02_species/
+
+# Download RefSeq genome sketch (once)
+wget https://gembox.cbcb.umd.edu/mash/refseq.genomes.k21s1000.msh
+
+# Use mash dist to identify top 5 species hit for each assembly
+mash dist refseq.genomes.k21s1000.msh sketch.msh \
+    | sort -k3 -n | awk 'seen[$2]++ < 5' | sort -k2,2 -k3,3n > mash_results.txt
+
+# Extract unique accession numbers and query species using ncbi datasets
+awk '{print $1}' mash_results.txt | grep -oE 'GCF_[0-9]+\.[0-9]+' | sort -u > unique_accessions.txt
+datasets summary genome accession --inputfile unique_accessions.txt --as-json-lines \
+    | jq -r '[.accession, .organism.organism_name] | @tsv' > species_summary.txt
+
+# Left join to remediate de-duplication of accession numbers performed by
+# ncbi datasets, and merge back with the mash distance output
+awk -F'\t' '
+NR==FNR { species[$1]=$2; next }
+{
+    match($1, /GCF_[0-9]+\.[0-9]+/);
+    acc = substr($1, RSTART, RLENGTH);
+    print $2 "\t" acc "\t" species[acc] "\t" $3
+}' species_summary.txt mash_results.txt > final_merged_results.txt
+
+echo "Done. Review final_merged_results.txt, then upload KPSC assemblies to"
+echo "Pathogenwatch and run Speciator for disambiguation, flagging any discrepancies."
+```
+
+## MLST and genome annotation
+
+```{.bash filename="scripts/mlst_and_annotation.sh"}
+#!/bin/bash
+# MLST typing (species-specific schemes) and Bakta genome annotation.
+# Run from the project root with the misid_ecoli conda environment active.
+
+conda activate misid_ecoli
+
+# Rename assembly files with organism prefix (once only)
+cd 00_assemblies
+for file in {R18,R8,R5,K59,K34,E66,E55,E47,E17,C56,C55,C43,E18,C52,C11}.fasta; do
+    mv "$file" "EC_$file"
+done
+for file in {K31,K28,K4,A02,C6,C22}.fasta; do
+    mv "$file" "KQ_$file"
+done
+for file in {E59,E60}.fasta; do
+    mv "$file" "KV_$file"
+done
+cd ..
+
+# E. coli -- Achtman scheme
+mlst --scheme ecoli_achtman_4 00_assemblies/EC_*.fasta > 04_mlst/ecoli_mlst_achtman.tsv
+
+# Klebsiella complex
+mlst --scheme klebsiella 00_assemblies/KQ_*.fasta 00_assemblies/KV_*.fasta > 04_mlst/kleb_mlst.tsv
+
+# Genome annotation with Bakta
+for f in 00_assemblies/*.fasta; do
+    name=$(basename "${f%.fasta}")
+    bakta --db /path/to/DB --prefix "$name" \
+        --output "03_annotation/${name}" "$f"
+done
+```
+
+---
+
+# Section 2: AMR Gene Detection and Plasmid Typing {#sec-amr-plasmid}
+
+## AMR gene detection and plasmid typing (MOB-suite)
+
+```{.bash filename="scripts/amr_and_plasmid_typing.sh"}
+#!/bin/bash
+# AMR gene detection (organism-specific AMRFinderPlus) and plasmid typing
+# (MOB-suite mob_recon). Run from the project root, misid_ecoli environment.
+
+# --- AMR gene detection ---
+mkdir -p metadata
+# metadata/species_organism_map.tsv is a manually curated two-column TSV:
+# <isolate_id>\t<organism>  (organism must be one AMRFinderPlus recognises,
+# e.g. Klebsiella_pneumoniae for all KPSC isolates, Escherichia for E. coli)
+
+amrfinder -u   # download/update the AMRFinderPlus database
+
+while IFS=$'\t' read -r isolate organism; do
+    amrfinder -n "00_assemblies/${isolate}.fasta" \
+        --organism "$organism" \
+        -o "05_amr/${isolate}_amr.tsv"
+done < metadata/species_organism_map.tsv
+
+# --- Plasmid typing with MOB-suite ---
+for f in 00_assemblies/*.fasta; do
+    name=$(basename "${f%.fasta}")
+    mob_recon --infile "$f" --outdir "06_plasmids/${name}"
+done
+```
+
+## Quality filtering of AMR results
+
+```{.bash filename="scripts/amr_qc_filter.sh"}
+#!/bin/bash
+# Quality-filter AMRFinderPlus results: drop PARTIALX (frameshifted, likely
+# non-functional) hits, and require >=70% coverage and >=90% identity.
+# Column positions ($13 Method, $16 % Coverage, $17 % Identity) match this
+# AMRFinderPlus version's TSV layout -- re-check column numbers with
+# `head -1 05_amr/<isolate>_amr.tsv | tr '\t' '\n' | cat -n` if you upgrade
+# AMRFinderPlus and this stops matching.
+
+mkdir -p 05_amr_filtered
+
+for file in 05_amr/*.tsv; do
+    [ -e "$file" ] || continue
+    filename=$(basename "$file")
+    awk 'BEGIN {FS="\t"; OFS="\t"}
+        NR==1 {print; next}
+        # Keep row IF: method is not PARTIALX AND coverage >= 70 AND identity >= 90
+        $13 != "PARTIALX" && $16 >= 70 && $17 >= 90 {print}
+    ' "$file" > "05_amr_filtered/$filename"
+    echo "Filtered: $filename"
+done
+
+echo "All clinical isolates processed. Quality-filtered results are saved in 05_amr_filtered/"
+```
+
+::: {.callout-note}
+Unspeciated `blaTEM` and `blaOXA` calls almost certainly represent **TEM-1** and **OXA-1** respectively — narrow-spectrum beta-lactamases conferring ampicillin resistance only, not ESBLs. Do not group these with ESBL genes downstream (@sec-mge-sharing resistome heatmap). For variant-level resolution, cross-check with `abricate` against ResFinder and CARD:
+
+```bash
+abricate --db resfinder 00_assemblies/*.fasta > resfinder_all_isolates.tsv
+abricate --db card      00_assemblies/*.fasta > card_all_isolates.tsv
+```
+
+Report the highest-resolution variant call available across AMRFinderPlus, ResFinder, and CARD.
+:::
+
+---
+
+# Section 3: Inter-Species Plasmid and ICE Sharing Analysis {#sec-mge-sharing}
+
+This is the central novel analysis: determining whether plasmids and ICEs are shared across species boundaries within the same hospital environment, and whether any elements are shared with the Mills et al. 2024 *K. pneumoniae* population.
+
+**Expected output:** a network figure showing inter-species MGE flow across the hospital population, and a table of shared plasmid clusters and ICEs.
+
+## Prerequisites
+
+```bash
+# Verify all tools are installed
+mob_recon --version          # MOB-suite >= 3.1.0
+blastn -version              # BLAST+ >= 2.12.0
+integron_finder --version    # IntegronFinder >= 2.0
+prokka --version
+
+# R packages
+Rscript -e "library(tidygraph); library(ggraph); library(igraph); library(dplyr); library(readr)"
+```
+
+Directory structure for this section:
+
+```bash
+mkdir -p 07_mge_sharing/{01_mob_recon,02_mob_cluster,03_ICE_detection,04_ICE_blast,05_integrons,06_network,07_amr_summary,08_plasmid_amr}
+```
+
+## Step 1: Prepare the combined dataset
+
+`mob_recon` has already been run on all 23 misidentified isolates (@sec-amr-plasmid) and the 103 Mills et al. 2024 *K. pneumoniae* isolates come with pre-processed `mob_recon` output. Link both into one combined `01_mob_recon/` directory, appending the species suffix that downstream scripts use to parse species (`Ecoli`, `Kquasipneumoniae`, `Kvariicola`, `Kpneumoniae`):
+
+```{.bash filename="scripts/step1a_symlink_misidentified.sh"}
+#!/bin/bash
+# Symlink mob_recon outputs for the 23 misidentified isolates into the
+# combined 01_mob_recon/ directory used by the MGE-sharing analysis,
+# appending the species suffix that drives species parsing downstream.
+# Run once only -- re-running fails on existing symlinks with a harmless
+# "file exists" error (use ln -sf if you need to re-run).
+
+PLASMIDS_DIR="$HOME/shared-team/ronnie.dir/06_plasmids"
+RECON_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/01_mob_recon"
+mkdir -p "$RECON_DIR"
+
+for isolate_dir in "$PLASMIDS_DIR"/*/; do
+    isolate=$(basename "$isolate_dir")
+    case "${isolate:0:2}" in
+        EC) species="Ecoli" ;;
+        KQ) species="Kquasipneumoniae" ;;
+        KV) species="Kvariicola" ;;
+        KA) species="Kaerogenes" ;;
+        *) echo "Unknown prefix for $isolate -- skipping"; continue ;;
+    esac
+    ln -s "$(realpath "$isolate_dir")" "$RECON_DIR/${isolate}_${species}"
+done
+
+# Verify (expect 23 misidentified isolate directories)
+ls "$RECON_DIR" | grep -v Kpneumoniae | wc -l
+```
+
+```{.bash filename="scripts/step1b_symlink_kpneumoniae.sh"}
+#!/bin/bash
+# Symlink the pre-processed Mills et al. 2024 K. pneumoniae mob_recon
+# outputs into the same combined 01_mob_recon/ directory as the
+# misidentified isolates (step1a_symlink_misidentified.sh). Run once only.
+
+KPN_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/kpneumoniae_mills2024"
+RECON_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/01_mob_recon"
+
+for strain_dir in "$KPN_DIR"/*/; do
+    strain=$(basename "$strain_dir")
+    isolate="${strain}_Kpneumoniae"
+    outdir="$RECON_DIR/$isolate"
+    mkdir -p "$outdir"
+
+    # Symlink chromosome (rename to mob_recon convention)
+    ln -s "${strain_dir}${strain}_chromosome.fasta" "$outdir/chromosome.fasta"
+
+    # Symlink plasmids (strip strain prefix to match mob_recon naming)
+    for pls in "${strain_dir}${strain}_plasmid_"*.fasta; do
+        [ -f "$pls" ] || continue
+        pname=$(basename "$pls" | sed "s/^${strain}_//")
+        ln -s "$pls" "$outdir/$pname"
+    done
+
+    # Symlink support files
+    for f in contig_report.txt mobtyper_results.txt; do
+        [ -f "${strain_dir}$f" ] && ln -s "${strain_dir}$f" "$outdir/$f"
+    done
+done
+
+# Verify: expect 103 subdirectories
+ls "$RECON_DIR" | wc -l
+```
+
+Confirm the total after both scripts have run:
+
+```bash
+ls 07_mge_sharing/01_mob_recon/ | wc -l   # expect 126
+```
+
+## Step 2: MOB-suite plasmid clustering and inter-species detection
+
+::: {.callout-note}
+`mob_cluster` is **not needed**. `mob_recon` was run with `--run_typer` for all isolates, so primary and secondary cluster IDs are already assigned in each isolate's `mobtyper_results.txt` — `mob_cluster` would only re-query the same reference database and return identical cluster IDs. Aggregate the existing results directly instead.
+:::
+
+```{.bash filename="scripts/step2b_aggregate_mobtyper.sh"}
+#!/bin/bash
+# Aggregate mob_recon's per-isolate mobtyper_results.txt (already generated
+# with --run_typer during mob_recon, so primary/secondary cluster IDs are
+# already assigned -- mob_cluster is not needed, it would just re-query the
+# same reference database) across all 126 isolates into one combined TSV.
+
+RECON_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/01_mob_recon"
+OUT="$HOME/shared-team/ronnie.dir/07_mge_sharing/02_mob_cluster/all_mobtyper_results.tsv"
+mkdir -p "$(dirname "$OUT")"
+
+# Write header from first file found
+header_file=$(find "$RECON_DIR" -name "mobtyper_results.txt" | head -1)
+head -1 "$header_file" | awk '{print "isolate\t" $0}' > "$OUT"
+
+# Append all isolates with isolate ID prepended
+for isolate_dir in "$RECON_DIR"/*/; do
+    isolate=$(basename "$isolate_dir")
+    f="${isolate_dir}mobtyper_results.txt"
+    [ -f "$f" ] || continue
+    tail -n +2 "$f" | awk -v iso="$isolate" 'NF > 1 {print iso "\t" $0}' >> "$OUT"
+done
+
+# Verify: expect one row per plasmid across all 126 isolates
+wc -l "$OUT"
+```
+
+Flag any primary cluster ID shared across more than one species:
+
+```{.r filename="scripts/identify_inter_species_clusters.R"}
+library(dplyr)
+library(readr)
+
+mobtyper <- read_tsv(
+    "~/shared-team/ronnie.dir/07_mge_sharing/02_mob_cluster/all_mobtyper_results.tsv"
+)
+
+# Parse species from isolate ID prefix
+clusters <- mobtyper %>%
+    rename(isolate_id = isolate) %>%
+    mutate(
+        species = case_when(
+            grepl("^EC_",  isolate_id) ~ "E. coli",
+            grepl("^KQ_",  isolate_id) ~ "K. quasipneumoniae",
+            grepl("^KV_",  isolate_id) ~ "K. variicola",
+            grepl("Kpneumoniae", isolate_id) ~ "K. pneumoniae",
+            TRUE ~ "Unknown"
+        )
+    ) %>%
+    filter(!is.na(primary_cluster_id), primary_cluster_id != "-")
+
+# Flag primary clusters spanning >1 species
+inter_species <- clusters %>%
+    group_by(primary_cluster_id) %>%
+    summarise(
+        n_plasmids   = n(),
+        n_isolates   = n_distinct(isolate_id),
+        n_species    = n_distinct(species),
+        species_list = paste(sort(unique(species)), collapse = "; ")
+    ) %>%
+    filter(n_species > 1) %>%
+    arrange(desc(n_isolates))
+
+write_csv(inter_species,
+    "~/shared-team/ronnie.dir/07_mge_sharing/02_mob_cluster/inter_species_clusters.csv")
+print(inter_species)
+
+# Check specifically for Mills et al. dominant K. pneumoniae clusters
+mills_clusters <- c("AA274", "AA277", "AA553", "AA556")
+clusters %>%
+    filter(primary_cluster_id %in% mills_clusters) %>%
+    group_by(primary_cluster_id, species) %>%
+    summarise(n_isolates = n_distinct(isolate_id), .groups = "drop") %>%
+    arrange(primary_cluster_id)
+```
+
+## Step 3: ICE detection
+
+ICEs integrate into the chromosome and are invisible to plasmid-focused tools. ICEfinder2 is run locally (not the web server) on the 23 misidentified isolates only — the 103 *K. pneumoniae* isolates are not passed through this step.
+
+::: {.callout-note}
+ICEfinder2 accepts FASTA or GenBank input. Use **FASTA** — GenBank mode requires a single-contig complete sequence, which most assemblies are not. ICEfinder2 annotates internally with its bundled Prokka. `krakenDB` in `config.ini` can be left as a placeholder; it is only invoked with `-t Metagenome`, which is not used here.
+:::
+
+**Merge multi-contig chromosomes into one contig per isolate** (required by ICEfinder2):
+
+::: {.callout-important}
+**Do not use `seqkit concat` for this.** It concatenates sequences across multiple *files* by matching IDs — it does not merge multiple contigs *within* a single file. Using it here produces empty output. Use the biopython script below instead.
+:::
+
+```{.bash filename="scripts/merge_misidentified_chromosomes.sh"}
+#!/bin/bash
+# Merge multi-contig chromosome FASTAs (misidentified isolates only -- the
+# 103 K. pneumoniae isolates are not run through ICEfinder2) into a single
+# contig per isolate, separated by 100 N spacers, since ICEfinder2 requires
+# one merged contig per input FASTA.
+#
+# Do NOT use `seqkit concat` for this -- it concatenates across files by
+# matching sequence IDs, it does not merge contigs within a single file.
+# Empty output resulted from that approach; use the biopython script below
+# instead. Requires the icefinder2_env conda environment (biopython 1.79).
+
+RECON_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/01_mob_recon"
+MERGED_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/03_ICE_detection/merged_chromosomes"
+mkdir -p "$MERGED_DIR"
+
+for isolate_dir in "$RECON_DIR"/*/; do
+    isolate=$(basename "$isolate_dir")
+    [[ "$isolate" == *"Kpneumoniae"* ]] && continue   # misidentified isolates only
+    chr="${isolate_dir}chromosome.fasta"
+    [ -f "$chr" ] || continue
+
+    python3 -c "
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+import sys
+seqs = list(SeqIO.parse(sys.argv[1], 'fasta'))
+merged = SeqRecord(Seq(('N'*100).join(str(s.seq) for s in seqs)),
+                   id=sys.argv[2], description='')
+SeqIO.write(merged, sys.argv[3], 'fasta')
+print(f'{sys.argv[2]}: {len(seqs)} contig(s), {len(merged.seq):,} bp')
+" "$chr" "${isolate}_merged" "$MERGED_DIR/${isolate}_chromosome_merged.fasta"
+done
+
+# Verify -- all files must be non-zero
+ls -lh "$MERGED_DIR"
+```
+
+**Run ICEfinder2** (1–2 minutes per genome; run inside `screen` so the batch survives a disconnected session):
+
+```{.bash filename="scripts/run_icefinder2_batch.sh"}
+#!/bin/bash
+# Run ICEfinder2 on all merged misidentified-isolate chromosomes.
+# ICEfinder2 takes 1-2 minutes per genome -- run this inside `screen` so
+# the job survives a disconnected session:
+#   screen -S icefinder2
+#   (run the commands below)
+#   Ctrl+A then D to detach; `screen -r icefinder2` to reattach.
+#
+# Only -i (input FASTA) and -t Single are valid flags for ICEfinder2 -- do
+# NOT add -o or --config, they do not exist. Output goes to result/ inside
+# ICEfinder2_linux/; config is read from config.ini in the same directory.
+
+conda activate icefinder2_env
+cd "$HOME/shared-team/ronnie.dir/ICEfinder2_linux" || exit 1
+
+MERGED_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/03_ICE_detection/merged_chromosomes"
+
+for fasta in "$MERGED_DIR"/*.fasta; do
+    sample=$(basename "$fasta" .fasta)
+    if [ -d "result/${sample}" ]; then
+        echo "SKIP: $sample (already done)"
+        continue
+    fi
+    echo "Running: $sample"
+    python ICEfinder2.py -i "$fasta" -t Single
+    echo "Done: $sample"
+done
+
+echo "All samples complete."
+```
+
+::: {.callout-important}
+Only `-i` (input FASTA) and `-t Single` are valid ICEfinder2 flags — do **not** add `-o` or `--config`, they do not exist. Output goes automatically to `result/` inside `ICEfinder2_linux/`.
+:::
+
+**Consolidate results:**
+
+```{.bash filename="scripts/step3c_consolidate_ice.sh"}
+#!/bin/bash
+# Consolidate ICEfinder2 per-isolate result JSONs into one place, and
+# report which isolates had ICEs detected. Run after run_icefinder2_batch.sh.
+
+ICE_RESULT_DIR="$HOME/shared-team/ronnie.dir/ICEfinder2_linux/result"
+OUT_DIR="$HOME/shared-team/ronnie.dir/07_mge_sharing/03_ICE_detection"
+mkdir -p "$OUT_DIR"
+
+for isolate_dir in "$ICE_RESULT_DIR"/*/; do
+    isolate=$(basename "$isolate_dir")
+    summary="${isolate_dir}${isolate}_ICEsum.json"
+    [ -f "$summary" ] && cp "$summary" "$OUT_DIR/${isolate}_ICEsum.json"
+done
+
+echo "Isolates with predicted ICEs:"
+ls "$OUT_DIR/"*_ICEsum.json 2>/dev/null | while read -r f; do
+    count=$(python -c "import json; d=json.load(open('$f')); print(len(d))" 2>/dev/null)
+    [ "$count" -gt 0 ] && echo "  $(basename "$f" _ICEsum.json): $count ICE(s)"
+done
+```
+
+**Extract standalone ICE nucleotide sequences for BLAST** (ICEfinder2 does not output these directly — sliced from the merged chromosome using each `_ICEsum.json`'s coordinate ranges):
+
+```{.python filename="scripts/extract_ice_sequences.py"}
+#!/usr/bin/env python3
+# Extract standalone ICE nucleotide sequences for BLAST -- ICEfinder2 outputs
+# per-ICE HTML and gene JSON files but not standalone FASTA, so these are
+# sliced out of the merged chromosome using the coordinate ranges recorded
+# in each isolate's _ICEsum.json. Requires biopython (icefinder2_env).
+
+import json, glob, os
+from Bio import SeqIO
+
+ice_result_dir = os.path.expanduser("~/shared-team/ronnie.dir/ICEfinder2_linux/result")
+recon_dir      = os.path.expanduser("~/shared-team/ronnie.dir/07_mge_sharing/01_mob_recon")
+out_fasta      = os.path.expanduser("~/shared-team/ronnie.dir/07_mge_sharing/03_ICE_detection/all_ICE_sequences.fasta")
+
+with open(out_fasta, "w") as out:
+    for summary in glob.glob(f"{ice_result_dir}/**/*_ICEsum.json", recursive=True):
+        isolate_base = os.path.splitext(os.path.basename(
+            summary.replace("_ICEsum.json", "")))[0]
+        # match isolate name to mob_recon directory (strip suffix cruft
+        # added by the merge/ICEfinder2 steps, e.g. "_chromosome_merged")
+        chr_fasta = None
+        isolate_label = None
+        for d in os.listdir(recon_dir):
+            if isolate_base in d:
+                candidate = os.path.join(recon_dir, d, "chromosome.fasta")
+                if os.path.exists(candidate):
+                    chr_fasta = candidate
+                    isolate_label = d
+                    break
+        if not chr_fasta:
+            print(f"WARNING: chromosome not found for {isolate_base}")
+            continue
+        chrom = list(SeqIO.parse(chr_fasta, "fasta"))
+        chrom_seq = "".join(str(r.seq) for r in chrom)
+        with open(summary) as f:
+            ices = json.load(f)
+        if not isinstance(ices, list):
+            ices = [ices]
+        for ice in ices:
+            loc = ice.get("location", "")
+            if not loc:
+                continue
+            start, end = (int(x) - 1 for x in loc.split(".."))
+            ice_seq = chrom_seq[start:end]
+            ice_id = ice.get("detail", ice.get("region", "ICE"))
+            out.write(f">{isolate_label}__{ice_id}\n{ice_seq}\n")
+
+print("Done. Sequences written to", out_fasta)
+```
+
+::: {.callout-warning}
+**Flagged for review, not yet independently verified**: this script's isolate-name matching (`if isolate_base in d`) checks whether the ICEfinder2 result directory name is contained *within* a shorter `01_mob_recon/` directory name. Given the ICEfinder2 result directory retains a longer name (including the `_chromosome_merged` suffix from the merge step) than the `01_mob_recon/` directory it needs to match against, this containment check runs in the direction that would not normally succeed as a substring match. It is reproduced here unchanged from the working version supplied, since altering matching logic without confirming actual ICEfinder2 output directory naming behaviour risked introducing a different, unverified bug — but this is worth Ronnie/Ebenn checking directly against real output before relying on it. See `NOTES_FOR_REVIEW.md`.
+:::
+
+## Step 4: Pairwise BLAST comparison of ICE sequences
+
+Identify shared ICEs across species at ≥95% nucleotide identity and ≥80% query coverage:
+
+```{.bash filename="scripts/ice_blast_pairwise.sh"}
+#!/bin/bash
+# Pairwise all-vs-all BLASTn of extracted ICE sequences to identify shared
+# ICEs across species at >=95% nucleotide identity and >=80% query coverage.
+
+makeblastdb \
+    -in 03_MGE_sharing/03_ICE_detection/all_ICE_sequences.fasta \
+    -dbtype nucl \
+    -out 03_MGE_sharing/04_ICE_blast/ICE_db
+
+blastn \
+    -query 03_MGE_sharing/03_ICE_detection/all_ICE_sequences.fasta \
+    -db 03_MGE_sharing/04_ICE_blast/ICE_db \
+    -perc_identity 95 \
+    -qcov_hsp_perc 80 \
+    -outfmt "6 qseqid sseqid pident qcovs length mismatch gapopen qstart qend sstart send evalue bitscore" \
+    -out 03_MGE_sharing/04_ICE_blast/ICE_pairwise_blast.tsv \
+    -num_threads 8
+
+# Remove self-hits
+awk '$1 != $2' 03_MGE_sharing/04_ICE_blast/ICE_pairwise_blast.tsv \
+    > 03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv
+```
+
+```{.r filename="scripts/parse_inter_species_ice_hits.R"}
+library(dplyr)
+library(readr)
+
+blast <- read_tsv("03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv",
+                  col_names = c("qseqid","sseqid","pident","qcovs","length",
+                                "mismatch","gapopen","qstart","qend",
+                                "sstart","send","evalue","bitscore"))
+
+blast <- blast %>%
+    mutate(
+        query_isolate   = sub("__ICE.*", "", qseqid),
+        subject_isolate = sub("__ICE.*", "", sseqid),
+        query_species   = case_when(
+            grepl("Ecoli",            query_isolate) ~ "E. coli",
+            grepl("Kpneumoniae",      query_isolate) ~ "K. pneumoniae",
+            grepl("Kquasipneumoniae", query_isolate) ~ "K. quasipneumoniae",
+            grepl("Kvariicola",       query_isolate) ~ "K. variicola",
+            grepl("aerogenes",        query_isolate) ~ "K. aerogenes",
+            TRUE ~ "Unknown"
+        ),
+        subject_species = case_when(
+            grepl("Ecoli",            subject_isolate) ~ "E. coli",
+            grepl("Kpneumoniae",      subject_isolate) ~ "K. pneumoniae",
+            grepl("Kquasipneumoniae", subject_isolate) ~ "K. quasipneumoniae",
+            grepl("Kvariicola",       subject_isolate) ~ "K. variicola",
+            grepl("aerogenes",        subject_isolate) ~ "K. aerogenes",
+            TRUE ~ "Unknown"
+        )
+    ) %>%
+    filter(query_isolate != subject_isolate)
+
+inter_species_ICE <- blast %>%
+    filter(query_species != subject_species) %>%
+    arrange(desc(pident))
+
+write_csv(inter_species_ICE, "03_MGE_sharing/04_ICE_blast/inter_species_ICE_hits.csv")
+```
+
+## Step 5: Integron detection
+
+Class 1 integrons are among the most important AMR gene dissemination mechanisms in clinical Enterobacterales — detecting shared cassette arrays across species strengthens the horizontal transfer evidence.
+
+::: {.callout-important}
+**Fix applied.** IntegronFinder nests its own results subdirectory inside whatever `--outdir` you give it, so the true isolate name sits *two* directory levels above the `.integrons` summary file, not one. Extracting the isolate name with a single `basename(dirname(...))` returns IntegronFinder's own internal subdirectory name instead. The script below uses `find` with a double-`dirname` to reach the correct level, and writes to `all_integrons_combined_clean.tsv` (distinguishing it from an earlier, incorrectly-parsed version).
+:::
+
+```{.bash filename="scripts/integron_finder_and_combine.sh"}
+#!/bin/bash
+# Run IntegronFinder on chromosome and plasmid sequences, then combine all
+# per-isolate summaries into one TSV.
+#
+# FIX APPLIED: IntegronFinder nests its own results subdirectory inside
+# whatever --outdir you give it (e.g. Result_Integron_Finder_<name>/), so
+# the true isolate name is TWO directory levels above the .integrons file,
+# not one. The original single-dirname approach
+# (`isolate=$(basename "$(dirname "$summary")")`) returned IntegronFinder's
+# internal subdirectory name instead of the isolate name. Using `find`
+# with double-dirname fixes this.
+
+# Run IntegronFinder on chromosome sequences
+for chr_fasta in 03_MGE_sharing/01_mob_recon/*/chromosome.fasta; do
+    isolate=$(basename "$(dirname "$chr_fasta")")
+    integron_finder \
+        --cpu 4 \
+        --pdf \
+        --outdir "03_MGE_sharing/05_integrons/$isolate/" \
+        "$chr_fasta"
+done
+
+# Also run on plasmid sequences
+for plasmid_fasta in 03_MGE_sharing/01_mob_recon/*/plasmid_*.fasta; do
+    isolate=$(basename "$(dirname "$plasmid_fasta")")
+    plasmid=$(basename "$plasmid_fasta" .fasta)
+    integron_finder \
+        --cpu 4 \
+        --outdir "03_MGE_sharing/05_integrons/${isolate}_${plasmid}/" \
+        "$plasmid_fasta"
+done
+
+# Combine all integron summaries -- double-dirname to skip past
+# IntegronFinder's own results subdirectory and reach the isolate name
+find 03_MGE_sharing/05_integrons -name "*.integrons" | while read -r summary; do
+    isolate=$(basename "$(dirname "$(dirname "$summary")")")
+    awk -v iso="$isolate" 'NR>1 {print iso "\t" $0}' "$summary"
+done > 03_MGE_sharing/05_integrons/all_integrons_combined_clean.tsv
+
+wc -l 03_MGE_sharing/05_integrons/all_integrons_combined_clean.tsv
+```
+
+## Step 6: Network visualisation
+
+```{.r filename="scripts/build_inter_species_network.R"}
+# Build and plot the inter-species MGE sharing network (plasmid clusters +
+# ICE BLAST hits) across all 126 isolates.
+#
+# FIXES APPLIED (see NOTES_FOR_REVIEW.md for detail):
+#  1. Duplicate node bug: ICE-derived isolate labels retained suffix cruft
+#     (e.g. "_chromosome_merged") that isolate labels from mob_recon/mobtyper
+#     did not, creating phantom duplicate nodes for the same real isolate.
+#     Fixed by normalising every isolate reference down to its base ID with
+#     a shared helper that strips the species suffix and anything after it.
+#  2. Legend label mismatch: `labels=` in scale_edge_colour_manual was an
+#     unnamed positional vector, silently swapping which label went with
+#     which colour. Fixed with a named vector keyed to the real edge_type
+#     values ("plasmid", "ICE").
+
+library(tidygraph)
+library(ggraph)
+library(igraph)
+library(dplyr)
+library(readr)
+library(stringr)
+
+# Normalise any isolate reference (from mobtyper OR from ICE FASTA headers)
+# down to its base isolate ID, regardless of what suffix cruft a given
+# pipeline stage attached.
+normalise_isolate <- function(x) {
+  str_remove(x, "_(Ecoli|Kquasipneumoniae|Kvariicola|Kpneumoniae).*")
+}
+
+# --- 1. Build edge list from MOB-suite clusters ---
+mobtyper <- read_tsv(
+    "~/shared-team/ronnie.dir/07_mge_sharing/02_mob_cluster/all_mobtyper_results.tsv"
+)
+
+clusters <- mobtyper %>%
+    rename(isolate_id = isolate, cluster_id = primary_cluster_id) %>%
+    filter(!is.na(cluster_id), cluster_id != "-") %>%
+    mutate(
+        species = case_when(
+            grepl("^EC_",        isolate_id) ~ "E. coli",
+            grepl("^KQ_",        isolate_id) ~ "K. quasipneumoniae",
+            grepl("^KV_",        isolate_id) ~ "K. variicola",
+            grepl("Kpneumoniae", isolate_id) ~ "K. pneumoniae",
+            TRUE ~ "Unknown"
+        ),
+        isolate_id = normalise_isolate(isolate_id)
+    )
+
+# For each cluster, create all pairwise isolate edges
+plasmid_edges <- clusters %>%
+    group_by(cluster_id) %>%
+    filter(n() > 1) %>%
+    do({
+        isolates <- .$isolate_id
+        expand.grid(from = isolates, to = isolates, stringsAsFactors = FALSE) %>%
+            filter(from < to) %>%
+            mutate(cluster_id = .$cluster_id[1], edge_type = "plasmid")
+    }) %>%
+    ungroup()
+
+# --- 2. Add ICE edges ---
+ice_blast <- read_tsv("03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv",
+                      col_names = c("qseqid","sseqid","pident","qcovs","length",
+                                    "mismatch","gapopen","qstart","qend",
+                                    "sstart","send","evalue","bitscore")) %>%
+    mutate(
+        from = normalise_isolate(sub("__ICE.*", "", qseqid)),
+        to   = normalise_isolate(sub("__ICE.*", "", sseqid))
+    ) %>%
+    filter(from < to) %>%
+    mutate(edge_type = "ICE", cluster_id = paste0("ICE_", qseqid)) %>%
+    select(from, to, cluster_id, edge_type, pident, qcovs)
+
+# --- 3. Build node table ---
+node_metadata <- clusters %>%
+    select(isolate_id, species) %>%
+    distinct(isolate_id, .keep_all = TRUE) %>%
+    rename(name = isolate_id) %>%
+    mutate(
+        dataset  = if_else(grepl("Kpneumoniae", name), "Mills et al. 2024", "Misidentified"),
+        hospital = sub(".*_H([0-9]+)_.*", "H\\1", name)   # adjust regex to your naming
+    )
+
+# --- 4. Combine edges ---
+all_edges <- bind_rows(
+    plasmid_edges %>% select(from, to, edge_type, cluster_id),
+    ice_blast     %>% select(from, to, edge_type, cluster_id)
+)
+
+# --- 5. Build tidygraph object ---
+g <- tbl_graph(nodes = node_metadata, edges = all_edges, directed = FALSE) %>%
+    activate(nodes) %>%
+    mutate(degree = centrality_degree())
+
+# --- 6. Plot ---
+species_colours <- c(
+    "E. coli"            = "#E41A1C",
+    "K. pneumoniae"      = "#377EB8",
+    "K. quasipneumoniae" = "#4DAF4A",
+    "K. variicola"       = "#984EA3",
+    "K. aerogenes"       = "#FF7F00"
+)
+
+edge_colours <- c("plasmid" = "#2166AC", "ICE" = "#D6604D")
+
+set.seed(42)
+p <- ggraph(g, layout = "fr") +
+    geom_edge_link(aes(colour = edge_type), alpha = 0.5, width = 0.8) +
+    geom_node_point(aes(colour = species, shape = dataset, size = degree)) +
+    geom_node_text(aes(label = name), size = 2.5, repel = TRUE) +
+    scale_colour_manual(values = species_colours) +
+    scale_edge_colour_manual(values = edge_colours,
+                             name = "MGE type",
+                             labels = c("plasmid" = "Plasmid cluster",
+                                        "ICE" = "ICE (≥95% identity)")) +
+    scale_shape_manual(values = c("Mills et al. 2024" = 16, "Misidentified" = 17),
+                       name = "Dataset") +
+    scale_size_continuous(range = c(3, 10), name = "Shared MGE degree") +
+    labs(
+        title    = "Inter-species mobile genetic element sharing network",
+        subtitle = "Southern Ghana tertiary hospitals | Misidentified isolates + Mills et al. 2024 K. pneumoniae",
+        colour   = "Species",
+        caption  = "Edges: shared plasmid cluster (MOB-suite) or shared ICE (BLASTn ≥95% identity, ≥80% coverage)"
+    ) +
+    theme_graph(base_family = "sans") +
+    theme(legend.position = "right")
+
+ggsave("03_MGE_sharing/06_network/inter_species_MGE_network.pdf",
+       p, width = 14, height = 10)
+ggsave("03_MGE_sharing/06_network/inter_species_MGE_network.png",
+       p, width = 14, height = 10, dpi = 300)
+```
+
+::: {.callout-important}
+**Two fixes applied to the network-building code, both described in comments in the script above:**
+
+1. **Duplicate node bug.** Isolate labels derived from ICE BLAST hits retained suffix cruft (e.g. `_chromosome_merged`) that labels derived from `mobtyper` did not, so the same real isolate could appear as two different node names — one via its plasmid edges, one via its ICE edges. Fixed with a shared `normalise_isolate()` helper applied everywhere an isolate name is constructed, stripping the species suffix and anything after it regardless of which pipeline stage produced the string.
+2. **Legend label mismatch.** `scale_edge_colour_manual(labels = ...)` was given an unnamed positional vector, which silently swaps which label is shown against which colour if ggplot's internal factor-level ordering doesn't match the order the labels happen to be listed in. Fixed with a named vector keyed to the actual `edge_type` values (`"plasmid"`, `"ICE"`).
+:::
+
+## Step 7: Summary table
+
+Aggregate the quality-filtered AMR results (@sec-amr-plasmid) into one combined file, then cross-reference against the inter-species clusters:
+
+```{.bash filename="scripts/aggregate_amr_filtered.sh"}
+#!/bin/bash
+# Aggregate the per-isolate quality-filtered AMRFinderPlus results
+# (05_amr_filtered/*.tsv, produced by amr_qc_filter.sh) into one combined
+# TSV, needed as input for step7_summary_table.R. Same pattern as
+# step2b_aggregate_mobtyper.sh.
+
+OUT_DIR="07_mge_sharing/07_amr_summary"
+OUT="$OUT_DIR/all_amr_filtered_combined.tsv"
+mkdir -p "$OUT_DIR"
+
+header_file=$(find 05_amr_filtered -name "*.tsv" | head -1)
+head -1 "$header_file" | awk '{print "isolate\t" $0}' > "$OUT"
+
+for f in 05_amr_filtered/*.tsv; do
+    isolate=$(basename "$f" _amr.tsv)
+    tail -n +2 "$f" | awk -v iso="$isolate" 'NF > 1 {print iso "\t" $0}' >> "$OUT"
+done
+
+wc -l "$OUT"
+```
+
+```{.r filename="scripts/step7_summary_table.R"}
+# Summary table of inter-species MGE-sharing clusters cross-referenced with
+# their carried AMR genes.
+#
+# FIX APPLIED: the placeholder path "path/to/amrfinderplus_all_isolates.tsv"
+# is replaced with the real combined AMR file produced by
+# aggregate_amr_filtered.sh. Also corrected the AMRFinderPlus column names
+# used in the join -- the real output columns are "Gene symbol" and
+# "Sequence name" (with spaces, as used throughout Section 2), not the
+# snake_case gene_symbol/sequence_name in the original placeholder code.
+
+library(dplyr)
+library(readr)
+
+# `inter_species` comes from identify_inter_species_clusters.R (run earlier
+# in the same session, or re-load its saved CSV output here if starting fresh):
+# inter_species <- read_csv("~/shared-team/ronnie.dir/07_mge_sharing/02_mob_cluster/inter_species_clusters.csv")
+
+amr <- read_tsv("07_mge_sharing/07_amr_summary/all_amr_filtered_combined.tsv")
+
+summary_table <- inter_species %>%
+    left_join(amr %>% select(isolate, `Gene symbol`, `Sequence name`),
+              by = c("isolate_id" = "isolate")) %>%
+    group_by(cluster_id, species_list) %>%
+    summarise(
+        n_isolates = n_distinct(isolate_id),
+        n_species  = n_distinct(species),
+        AMR_genes  = paste(sort(unique(`Gene symbol`)), collapse = "; "),
+        .groups    = "drop"
+    ) %>%
+    arrange(desc(n_species), desc(n_isolates))
+
+write_csv(summary_table, "03_MGE_sharing/06_network/inter_species_MGE_summary_table.csv")
+```
+
+::: {.callout-important}
+**Fix applied.** The original code referenced a placeholder path (`"path/to/amrfinderplus_all_isolates.tsv"`) that was never filled in, and joined on `gene_symbol`/`sequence_name` — snake_case names that do not match AMRFinderPlus's actual output columns. Fixed to point at the real combined file produced by `aggregate_amr_filtered.sh` above, and to join on the correct column names, `` `Gene symbol` `` and `` `Sequence name` `` (with spaces, as AMRFinderPlus actually names them).
+:::
+
+## Step 8: Confirming plasmid-borne ARGs
+
+`mob_recon`'s `molecule_type` classification tells you a contig is a plasmid, but confirming an AMR gene is *plasmid-borne* (rather than just present somewhere in an assembly that also happens to carry plasmids) is stronger evidence when it comes from running AMRFinderPlus directly on the isolate's plasmid sequences alone:
+
+```{.bash filename="scripts/plasmid_borne_arg_identification.sh"}
+#!/bin/bash
+# Confirm plasmid-borne ARGs directly: run AMRFinderPlus on each isolate's
+# concatenated plasmid FASTAs alone (from mob_recon), so any AMR hit found
+# is unambiguously plasmid-located rather than inferred from contig-level
+# molecule_type alone.
+
+MOB_DIR="07_mge_sharing/01_mob_recon"
+OUT_DIR="07_mge_sharing/08_plasmid_amr"
+mkdir -p "$OUT_DIR"
+
+for isolate_dir in "$MOB_DIR"/*/; do
+    isolate=$(basename "$isolate_dir")
+    plasmid_combined="${OUT_DIR}/${isolate}_plasmids_combined.fasta"
+    cat "$isolate_dir"plasmid_*.fasta > "$plasmid_combined" 2>/dev/null
+    if [ ! -s "$plasmid_combined" ]; then
+        echo "No plasmid FASTAs for $isolate -- skipping"
+        rm -f "$plasmid_combined"
+        continue
+    fi
+    echo "AMRFinderPlus: $isolate"
+    amrfinder \
+        --nucleotide "$plasmid_combined" \
+        --plus \
+        --output "${OUT_DIR}/${isolate}_plasmid_amr.tsv"
+done
+echo "All done."
+```
+
+Cross-reference against the inter-species plasmid clusters identified in Step 2:
+
+```{.r filename="scripts/plasmid_borne_arg_confirmation.R"}
+# Cross-reference confirmed plasmid-borne ARGs (from
+# plasmid_borne_arg_identification.sh) against the inter-species plasmid
+# clusters, to report which AMR genes are confirmed present specifically
+# on the plasmids driving inter-species sharing.
+
+library(tidyverse)
+
+MOB_DIR       <- "07_mge_sharing/01_mob_recon"
+PLASMID_AMR   <- "07_mge_sharing/08_plasmid_amr"
+CLUSTER_TABLE <- "07_mge_sharing/06_network/inter_species_MGE_summary_table.csv"
+
+# --- 1. Load mob_recon contig reports ---
+# Maps each contig (sequence_id) to its primary_cluster_id and molecule_type
+contig_reports <- list.files(
+  MOB_DIR, pattern = "contig_report.txt",
+  recursive = TRUE, full.names = TRUE
+) |>
+  map_dfr(\(f) {
+    read_tsv(f, col_types = cols(.default = "c")) |>
+      mutate(isolate = basename(dirname(f)))
+  })
+
+# --- 2. Load plasmid AMRFinderPlus results ---
+plasmid_amr_raw <- list.files(
+  PLASMID_AMR, pattern = "_plasmid_amr\\.tsv$",
+  full.names = TRUE
+) |>
+  map_dfr(\(f) {
+    read_tsv(f, col_types = cols(.default = "c")) |>
+      mutate(isolate = str_remove(basename(f), "_plasmid_amr\\.tsv$"))
+  })
+
+# --- 3. Apply PARTIAL hit filters (consistent with full-genome AMRFinder filtering) ---
+# PARTIALX             = frameshift detected -> gene likely non-functional -> exclude
+# PARTIAL_CONTIG_ENDX  = contig truncation -> real gene, apply identity/coverage threshold
+plasmid_amr_filtered <- plasmid_amr_raw |>
+  filter(
+    !str_detect(Method, "^PARTIALX"),
+    !(str_detect(Method, "PARTIAL_CONTIG_END") &
+        (as.numeric(`% Coverage of reference sequence`) < 70 |
+         as.numeric(`% Identity to reference sequence`) < 90))
+  )
+
+# --- 4. Join with contig report to get primary_cluster_id ---
+# AMRFinderPlus "Contig id" column matches mob_recon "sequence_id"
+plasmid_amr_annotated <- plasmid_amr_filtered |>
+  left_join(
+    contig_reports |> select(isolate, sequence_id, primary_cluster_id, molecule_type),
+    by = c("isolate", "Contig id" = "sequence_id")
+  ) |>
+  filter(molecule_type == "plasmid")
+
+# --- 5. Filter to inter-species shared plasmids only ---
+inter_clusters <- read_csv(CLUSTER_TABLE)
+
+plasmid_amr_inter <- plasmid_amr_annotated |>
+  filter(primary_cluster_id %in% inter_clusters$primary_cluster_id)
+
+# --- 6. Summarise: confirmed plasmid ARGs per inter-species cluster ---
+plasmid_arg_summary <- plasmid_amr_inter |>
+  group_by(primary_cluster_id) |>
+  summarise(
+    n_isolates_with_plasmid_ARG = n_distinct(isolate),
+    confirmed_plasmid_ARGs = paste(sort(unique(`Gene symbol`)), collapse = "; "),
+    .groups = "drop"
+  ) |>
+  left_join(inter_clusters, by = "primary_cluster_id") |>
+  relocate(primary_cluster_id, species_list, n_isolate, confirmed_plasmid_ARGs)
+
+write_tsv(
+  plasmid_arg_summary,
+  file.path(PLASMID_AMR, "inter_species_confirmed_plasmid_ARGs.tsv")
+)
+```
+
+## Step 9: Resistome visualisation
+
+A combined heatmap distinguishing intrinsic, chromosomal-mediated, and plasmid-mediated (confirmed via Step 8) acquired resistance genes/mutations across the 23 misidentified isolates:
+
+```{.r filename="scripts/resistome_heatmap.R"}
+# Resistome heatmap: intrinsic vs chromosomal-mediated vs plasmid-mediated
+# acquired AMR genes/mutations across the 23 misidentified isolates,
+# annotated by species.
+#
+# NOTE: output filename changed from the original "Hongkong_combined_
+# resistome.pdf" to "Ghana_combined_resistome.pdf" to match the project's
+# actual setting (Southern Ghana) -- see NOTES_FOR_REVIEW.md.
+
+library(tidyverse)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+# 1. Define paths and output
+dir_path <- "05_amr_filtered"
+output_dir <- "10_figures"
+if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+tsv_files <- list.files(path = dir_path, pattern = "\\.tsv$", full.names = TRUE)
+
+# Extract all non-duplicate plasmid-borne ARGs
+plasmid_amr_dir <- "07_mge_sharing/08_plasmid_amr"
+plasmid_tsv_files <- list.files(path = plasmid_amr_dir, pattern = "_plasmid_amr\\.tsv$", full.names = TRUE)
+plasmid_args <- map_dfr(plasmid_tsv_files, ~ {
+  df <- read_tsv(.x, show_col_types = FALSE)
+  if ("Element symbol" %in% colnames(df)) {
+    df %>% select(`Element symbol`)
+  } else {
+    tibble(`Element symbol` = character())
+  }
+}) %>%
+  drop_na(`Element symbol`) %>%
+  pull(`Element symbol`) %>%
+  unique()
+
+custom_row_order <- c("E18", "E17", "C11", "E55", "E66", "C43", "C52", "K34", "K59",
+                      "C55", "R5", "E47", "C56", "R18", "R8", "K28", "K31", "C22",
+                      "C6", "A02", "K4", "E59", "E60")
+
+custom_mge_col_order <- c("Aminoglycoside", "Beta-lactamase", "ESBL", "AmpC Beta-lactamase",
+                          "Macrolide", "MLS", "Phenicol",
+                          "Sulfonamide", "Tetracycline", "Trimethoprim",
+                          "Quinolone", "Quaternary ammonium compound")
+
+custom_chrom_col_order <- c("Multidrug efflux pump repressor", "Quinolone", "Nitrofuran", "Fosfomycin",
+                            "Fosmidomycin", "Beta-lactamase", "Siderophore cephalosporin")
+
+# 2. Broad group classification
+classify_gene <- function(symbol) {
+  if (is.na(symbol)) return("Unknown")
+  if (str_detect(symbol, "^(?i)(blalen|blaokp|fosa|oqxa|oqxb)")) {
+    return("Intrinsic")
+  }
+  if (symbol %in% plasmid_args) {
+    return("Plasmid")
+  }
+  return("Chromosomal")
+}
+
+# 3. Isolate metadata
+all_raw_names <- tools::file_path_sans_ext(basename(tsv_files))
+meta_df <- tibble(raw_name = all_raw_names) %>%
+  mutate(
+    Isolate = map_chr(raw_name, ~ {
+      parts <- unlist(strsplit(.x, "_"))
+      if (length(parts) >= 2) parts[2] else .x
+    }),
+    Species = case_when(
+      str_starts(raw_name, "EC") ~ "E. coli",
+      str_starts(raw_name, "KV") ~ "K. variicola",
+      str_starts(raw_name, "KQ") ~ "K. quasipneumoniae",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  select(-raw_name) %>%
+  distinct()
+
+process_amr_file_all <- function(file_path) {
+  raw_name <- tools::file_path_sans_ext(basename(file_path))
+  parts <- unlist(strsplit(raw_name, "_"))
+  iso_name <- if (length(parts) >= 2) parts[2] else raw_name
+
+  df <- read_tsv(file_path, show_col_types = FALSE)
+  if (all(c("Element symbol", "Class") %in% colnames(df))) {
+    return(df %>%
+             select(`Element symbol`, Class) %>%
+             drop_na(Class, `Element symbol`) %>%
+             mutate(Group = map_chr(`Element symbol`, classify_gene)) %>%
+             separate_longer_delim(Class, delim = "/") %>%
+             distinct(Group, Class) %>%
+             mutate(Isolate = iso_name, Presence = 1))
+  } else {
+    return(tibble(Isolate = iso_name, Group = character(), Class = character(), Presence = numeric()))
+  }
+}
+
+all_parsed_data <- map_dfr(tsv_files, process_amr_file_all)
+
+# 5. Build group matrices
+build_group_matrix <- function(data_df, target_group, col_order_plan = NULL) {
+  group_data <- data_df %>%
+    filter(Group == target_group, Isolate %in% custom_row_order)
+
+  if (nrow(group_data) > 0) {
+    matrix_df <- group_data %>%
+      select(-Group) %>%
+      pivot_wider(names_from = Class, values_from = Presence, values_fill = list(Presence = 0))
+  } else {
+    matrix_df <- tibble(Isolate = custom_row_order)
+  }
+
+  missing_iso <- setdiff(custom_row_order, matrix_df$Isolate)
+  if (length(missing_iso) > 0) {
+    matrix_df <- bind_rows(matrix_df, tibble(Isolate = missing_iso))
+  }
+  matrix_df <- matrix_df %>% mutate(across(-Isolate, ~replace_na(.x, 0)))
+
+  matrix_df <- matrix_df %>%
+    mutate(Isolate = factor(Isolate, levels = custom_row_order)) %>%
+    arrange(Isolate) %>%
+    mutate(Isolate = as.character(Isolate))
+
+  mat <- as.matrix(matrix_df %>% select(-Isolate))
+  rownames(mat) <- matrix_df$Isolate
+
+  if (!is.null(col_order_plan) && ncol(mat) > 0) {
+    matched <- intersect(col_order_plan, colnames(mat))
+    unmatched <- setdiff(colnames(mat), col_order_plan)
+    mat <- mat[, c(matched, unmatched), drop = FALSE]
+  }
+  return(mat)
+}
+
+mat_intrinsic   <- build_group_matrix(all_parsed_data, "Intrinsic")
+mat_chromosomal <- build_group_matrix(all_parsed_data, "Chromosomal", custom_chrom_col_order)
+mat_mge         <- build_group_matrix(all_parsed_data, "Plasmid", custom_mge_col_order)
+
+# 6. Visual settings
+colors <- colorRamp2(c(0, 1), c("white", "#F27A6D"))
+species_colors <- c("E. coli" = "#6DC6F2", "K. variicola" = "#6D6DF2", "K. quasipneumoniae" = "#6D99F2", "Other" = "darkgray")
+
+aligned_metadata <- tibble(Isolate = custom_row_order) %>%
+  left_join(meta_df, by = "Isolate") %>%
+  mutate(Species = replace_na(Species, "Other"))
+
+row_ha <- rowAnnotation(
+  Species = aligned_metadata$Species,
+  col = list(Species = species_colors),
+  show_annotation_name = FALSE,
+  annotation_legend_param = list(Species = list(title = "Species", title_gp = gpar(fontface = "bold"), labels_gp = gpar(fontface = "italic")))
+)
+
+# 7. Define sub-heatmaps
+title_headroom <- "\n\n\n\n\n\n"
+
+ht_intrinsic <- Heatmap(
+  mat_intrinsic, name = "Resistance", col = colors, rect_gp = gpar(col = "white", lwd = 0.5),
+  width = ncol(mat_intrinsic) * unit(6, "mm"), height = nrow(mat_intrinsic) * unit(6, "mm"),
+  column_title = title_headroom,
+  cluster_rows = FALSE, cluster_columns = FALSE, show_row_dend = FALSE, show_column_dend = FALSE,
+  left_annotation = row_ha, row_names_side = "left", show_row_names = TRUE,
+  column_names_side = "top", column_names_rot = 90,
+  show_heatmap_legend = TRUE,
+  heatmap_legend_param = list(at = c(0, 1), labels = c("Absent", "Present"), title = "Gene/mutation status", color_bar = "discrete")
+)
+
+ht_chromosomal <- Heatmap(
+  mat_chromosomal, name = "Chromosomal_Heat", col = colors, rect_gp = gpar(col = "white", lwd = 0.5),
+  width = ncol(mat_chromosomal) * unit(6, "mm"), height = nrow(mat_chromosomal) * unit(6, "mm"),
+  column_title = title_headroom,
+  cluster_rows = FALSE, cluster_columns = FALSE, show_row_dend = FALSE, show_column_dend = FALSE,
+  show_row_names = FALSE, column_names_side = "top", column_names_rot = 90,
+  show_heatmap_legend = FALSE
+)
+
+ht_mge <- Heatmap(
+  mat_mge, name = "MGE_Heat", col = colors, rect_gp = gpar(col = "white", lwd = 0.5),
+  width = ncol(mat_mge) * unit(6, "mm"), height = nrow(mat_mge) * unit(6, "mm"),
+  column_title = title_headroom,
+  cluster_rows = FALSE, cluster_columns = FALSE, show_row_dend = FALSE, show_column_dend = FALSE,
+  show_row_names = FALSE, column_names_side = "top", column_names_rot = 90,
+  show_heatmap_legend = FALSE
+)
+
+final_ht_list <- ht_intrinsic + ht_chromosomal + ht_mge
+
+# 8. Output layout execution
+combined_pdf_path <- file.path(output_dir, "Ghana_combined_resistome.pdf")
+pdf(combined_pdf_path, width = 16, height = 12)
+
+draw(final_ht_list, padding = unit(c(5, 5, 5, 5), "mm"), heatmap_legend_side = "right")
+
+# --- Custom grid plot overlays ---
+draw_inner_bracket <- function(heatmap_name, label_text) {
+  decorate_column_title(heatmap_name, {
+    grid.lines(x = c(0, 1), y = c(0.35, 0.35), gp = gpar(lwd = 1.0, col = "black"))
+    grid.lines(x = c(0, 0), y = c(0.35, 0.10), gp = gpar(lwd = 1.0, col = "black"))
+    grid.lines(x = c(1, 1), y = c(0.35, 0.10), gp = gpar(lwd = 1.0, col = "black"))
+    grid.text(label = label_text, x = 0.5, y = 0.50, gp = gpar(fontface = "plain", fontsize = 10))
+  })
+}
+
+draw_inner_bracket("Chromosomal_Heat", "Chromosomal-mediated")
+draw_inner_bracket("MGE_Heat", "Plasmid-mediated")
+
+draw_group_bracket <- function(heatmap_name, label_text) {
+  decorate_column_title(heatmap_name, {
+    grid.lines(x = c(0, 1), y = c(0.75, 0.75), gp = gpar(lwd = 1.5, col = "black"))
+    grid.lines(x = c(0, 0), y = c(0.75, 0.65), gp = gpar(lwd = 1.5, col = "black"))
+    grid.lines(x = c(1, 1), y = c(0.75, 0.65), gp = gpar(lwd = 1.5, col = "black"))
+    grid.text(label = label_text, x = 0.5, y = 0.90, gp = gpar(fontface = "bold", fontsize = 10))
+  })
+}
+
+draw_group_bracket("Resistance", "Intrinsic")
+
+decorate_column_title("Chromosomal_Heat", {
+  grid.lines(x = c(0, 1), y = c(0.75, 0.75), gp = gpar(lwd = 1.5, col = "#bd0026"))
+  grid.lines(x = c(0, 0), y = c(0.75, 0.65), gp = gpar(lwd = 1.5, col = "#bd0026"))
+})
+
+decorate_column_title("MGE_Heat", {
+  grid.lines(x = c(0, 1), y = c(0.75, 0.75), gp = gpar(lwd = 1.5, col = "#bd0026"))
+  grid.lines(x = c(1, 1), y = c(0.75, 0.65), gp = gpar(lwd = 1.5, col = "#bd0026"))
+})
+
+decorate_column_title("Chromosomal_Heat", {
+  grid.lines(x = c(1, 1.1), y = c(0.75, 0.75), gp = gpar(lwd = 1.5, col = "#bd0026"))
+})
+
+decorate_column_title("MGE_Heat", {
+  grid.text(
+    label = "                                Acquired resistance genes/mutations",
+    x = -0.15,
+    y = 0.90,
+    gp = gpar(fontface = "bold", fontsize = 10, col = "#bd0026")
+  )
+})
+
+dev.off()
+```
+
+## Interpreting results
+
+| Finding | Interpretation |
+|---|---|
+| A MOB-suite cluster contains both misidentified isolates and Mills *K. pneumoniae* | Active plasmid transfer occurring across species in this hospital population |
+| Misidentified isolate plasmid falls in cluster AA274, AA277, AA553, or AA556 | Likely sharing with the dominant *K. pneumoniae* plasmid lineages — high-priority finding |
+| A cluster spans multiple hospitals | Regional dissemination, not just within-hospital transmission |
+| An AMR gene (e.g. blaCTX-M-15) on a shared cluster | That plasmid is an active AMR hotspot driving inter-species resistance spread |
+| ICE BLAST hit between different species | ICE-mediated chromosomal gene transfer across a species boundary |
+| No inter-species clusters detected | MGEs are species-restricted despite co-circulation |
+
+::: {.callout-note}
+## Summary of key findings to date
+
+- **18 inter-species plasmid clusters** identified across the 126-isolate dataset.
+- **Cluster AA548** spans three species (*E. coli*, *K. pneumoniae*, *K. quasipneumoniae*) — the broadest cross-genus reach observed.
+- **10 of 18 clusters involve *E. coli***.
+- ***K. variicola* shows no inter-species sharing at all** — absent from the inter-species network entirely.
+- Some isolates share MGEs exclusively *within* their own species (e.g. certain *E. coli* isolates show plasmid/ICE sharing only with other *E. coli*, never crossing a species boundary), despite being part of the same tested population — an important nuance distinct from isolates with zero sharing at all.
+- **Integron-carrying inter-species clusters**: AA405 (complete integron, *K. pneumoniae* ↔ *K. quasipneumoniae*) and AA402 (two complete integrons, same species pair); AA552 (*E. coli* ↔ *K. pneumoniae*) carries only an incomplete In0 structure, no active cassette capture. Complete integrons with active cassette arrays were only observed *within* genus, not crossing the *E. coli*/*Klebsiella* boundary.
+:::
+
+---
+
+# Section 4: Virulence Characterisation by Species {#sec-virulence}
+
+## *E. coli*: O:H serotyping and K-locus typing
+
+```{.bash filename="scripts/ecoli_serotyping_klocus_typing.sh"}
+#!/bin/bash
+# E. coli O:H serotyping (ECTyper) and K-locus typing (Kaptive, two-pass:
+# G2/G3 groups first, then G1/G4 on isolates left untypeable by the first pass).
+
+# --- O:H serotyping ---
+ectyper -i 00_assemblies/EC_*.fasta -o 08_virulence/ectyper/ -opid 70
+
+# --- K-locus typing: Step 1, G2/G3 ---
+cd 08_virulence/ || exit 1
+unzip EC-K-typing-G1G4-main.zip
+    # download from https://github.com/efosternyarko/EC-K-typing-G1G4
+mkdir -p kaptive_G23
+kaptive assembly \
+    ./EC-K-typing-G1G4-main/DB/EC-K-typing_group2and3_v3.0.0.gbk \
+    /shared/team/ronnie.dir/00_assemblies/EC_*.fasta \
+    -o kaptive_G23/kaptive_results.tsv
+
+# --- K-locus typing: Step 2, G1/G4 on isolates "Untypeable" in Step 1 ---
+grep -w "Untypeable" kaptive_G23/kaptive_results.tsv | cut -f1 > untypeable_ids.txt
+mkdir -p untypeable/
+while IFS= read -r id; do
+    cp "/shared/team/ronnie.dir/00_assemblies/${id}.fasta" untypeable/
+done < untypeable_ids.txt
+
+mkdir -p kaptive_G14
+kaptive assembly \
+    EC-K-typing-G1G4-main/DB/EC-K-typing_group1and4_v1.3.gbk \
+    untypeable/*.fasta \
+    --scores kaptive_G14/kaptive_scores.tsv \
+    -t 8
+
+python3 EC-K-typing-G1G4-main/scripts/normalise_kaptive_scores.py \
+    --db EC-K-typing-G1G4-main/DB/EC-K-typing_group1and4_v1.3.gbk \
+    --in kaptive_G14/kaptive_scores.tsv \
+    --out kaptive_G14/kaptive_results_norm.tsv
+```
+
+## *E. coli*: Clermont phylotyping and virulence factor screening
+
+```{.bash filename="scripts/clermont_and_vf_screen.sh"}
+#!/bin/bash
+# Clermont phylogroup typing (ezclermont) and virulence factor screening
+# (ABRicate, Ecoli_VF database) for the E. coli isolates.
+
+mkdir -p 08_virulence/clermont
+for file in 00_assemblies/05_ecoli/*.fasta; do
+    base_name=$(basename "$file" .fasta)
+    echo "Processing $base_name..."
+    ezclermont "$file" > "08_virulence/clermont/${base_name}_clermont.txt"
+done
+
+echo -e "Isolate\tPhylotype" > 08_virulence/clermont/summary_phylotypes.txt
+for file in 08_virulence/clermont/EC_*_clermont.txt; do
+    base_name=$(basename "$file" _clermont.txt)
+    phylotype=$(cat "$file")
+    echo -e "${base_name}\t${phylotype}" >> 08_virulence/clermont/summary_phylotypes.txt
+done
+
+# ABRicate screen using Ecoli_VF
+abricate --db ecoli_vf 00_assemblies/*.fasta > 08_virulence/vfdb_all.tsv
+```
+
+## *E. coli*: pathotype assignment
+
+```{.r filename="scripts/pathotype_assignment.R"}
+# E. coli pathotype assignment from ABRicate VFDB screening results:
+# intestinal-marker detection plus Johnson et al. (2018) and Spurbeck et
+# al. (2012) ExPEC scoring criteria.
+
+library(tidyverse)
+
+# 1. Load data
+vf <- read_tsv("08_virulence/vfdb_ecoli.tsv")
+all_files <- list.files("00_assemblies/05_ecoli", pattern = "EC_.*\\.fasta", full.names = TRUE)
+
+# 2. Define pattern regex
+# Word boundaries prevent eae matching eaeH, estA matching estABC, etc.
+inpec_markers <- "\\beae\\b|\\bbfpA\\b|\\bstx|\\baggR\\b|\\bipa|\\bestA\\b|\\bestB\\b|\\beltA\\b|\\beltB\\b"
+
+# 3. Build master isolate list
+isolates_master <- tibble(file_path = all_files) %>%
+  mutate(sample_id = str_extract(basename(file_path), "EC_[^.]+")) %>%
+  select(sample_id)
+
+# 4. Profile isolates
+isolate_profiles <- vf %>%
+  mutate(sample_id = str_extract(basename(`#FILE`), "EC_[^.]+")) %>%
+  group_by(sample_id) %>%
+  summarise(
+    Has_Intestinal_Markers = any(str_detect(GENE, inpec_markers)),
+
+    # Criteria A: Johnson et al. (2018) ExPEC Score (threshold: >= 2)
+    Johnson_Score = sum(c(
+      any(str_detect(GENE, "\\b(papA|papC)\\b")),
+      any(str_detect(GENE, "\\b(sfaD|sfaE|sfaS|focC|focI)\\b")),
+      any(str_detect(GENE, "\\bafa")),          # prefix match: catches afaC, afaD, afaE etc.
+      any(str_detect(GENE, "\\b(iutA|iroN)\\b")),
+      any(str_detect(GENE, "\\b(kpsM|kpsT|kpsD)\\b")),
+      any(str_detect(GENE, "\\b(sat|hlyA|cnf1)\\b"))
+    ), na.rm = TRUE),
+
+    # Criteria B: Spurbeck et al. (2012) UPEC Score (threshold: >= 2)
+    Spurbeck_Score = sum(c(
+      any(str_detect(GENE, "\\bfim")),          # prefix match: catches fimA, fimH, fimC etc.
+      any(str_detect(GENE, "\\b(chuA)\\b")),
+      any(str_detect(GENE, "\\b(fyuA)\\b")),
+      any(str_detect(GENE, "\\b(vat)\\b")),
+      any(str_detect(GENE, "\\b(yfcV)\\b"))
+    ), na.rm = TRUE)
+  ) %>%
+  mutate(
+    Is_ExPEC = (Johnson_Score >= 2) | (Spurbeck_Score >= 2)
+  )
+
+# 5. Report generation
+pathotype_report <- isolates_master %>%
+  left_join(isolate_profiles, by = "sample_id") %>%
+  mutate(
+    Has_Intestinal_Markers = replace_na(Has_Intestinal_Markers, FALSE),
+    Johnson_Score          = replace_na(Johnson_Score, 0L),
+    Spurbeck_Score         = replace_na(Spurbeck_Score, 0L),
+    Is_ExPEC               = replace_na(Is_ExPEC, FALSE),
+
+    Pathotype = case_when(
+      Has_Intestinal_Markers & Is_ExPEC ~ "ExPEC with intestinal markers",
+      Has_Intestinal_Markers            ~ "Intestinal",
+      Is_ExPEC                          ~ "ExPEC",
+      TRUE                              ~ "Commensal / Unknown"
+    )
+  )
+
+write_tsv(pathotype_report, "08_virulence/pathotype_report.tsv")
+print(pathotype_report, width = Inf)
+```
+
+## *E. coli*: virulome heatmap
+
+```{.r filename="scripts/ecoli_virulome_heatmap.R"}
+# E. coli iron-acquisition/virulence gene heatmap, annotated with ST,
+# phylogroup, pathotype, O:H serotype, and K-locus metadata.
+#
+# NOTE: output filename changed from the original "Hongkong_iron_heatmap.pdf"
+# to "Ghana_ecoli_iron_heatmap.pdf" to match the project's actual setting
+# (Southern Ghana) -- see NOTES_FOR_REVIEW.md.
+
+library(tidyverse)
+library(ComplexHeatmap)
+library(circlize)
+
+# 1. Load ABRicate data
+raw_data <- read_tsv("08_virulence/vfdb_ecoli_matrix.tsv")
+
+cleaned_data <- raw_data %>%
+  mutate(Isolate = gsub("^EC_", "", gsub("\\.fasta$", "", basename(`#FILE`)))) %>%
+  select(-`#FILE`, -NUM_FOUND) %>%
+  column_to_rownames("Isolate")
+
+# 2. Filter iron genes
+iron_regex_pattern <- "^(chu|ent|fep|fes|iuc|iut|irp|fyu|iro|sit|ybt|hma)"
+iron_gene_columns <- grep(iron_regex_pattern, colnames(cleaned_data), ignore.case = TRUE, value = TRUE)
+if ("clbA" %in% colnames(cleaned_data)) {
+  iron_gene_columns <- c(iron_gene_columns, "clbA")
+}
+
+df_iron <- cleaned_data[, iron_gene_columns, drop = FALSE]
+mat_gene <- as.matrix(df_iron)
+mat_gene[mat_gene == "."] <- "0"
+mat_gene[mat_gene != "0"] <- "1"
+class(mat_gene) <- "numeric"
+
+collapse_prefixes <- c("chu", "ent", "fep", "iro", "iuc", "sit", "ybt")
+mat_collapsed <- as.data.frame(mat_gene)
+
+for (locus in collapse_prefixes) {
+  locus_cols <- grep(paste0("^", locus), colnames(mat_collapsed), value = TRUE)
+  if (length(locus_cols) > 0) {
+    mat_collapsed[[locus]] <- ifelse(rowSums(mat_collapsed[, locus_cols, drop = FALSE]) > 0, 1, 0)
+    mat_collapsed <- mat_collapsed[, !(colnames(mat_collapsed) %in% locus_cols), drop = FALSE]
+  }
+}
+mat_gene <- as.matrix(mat_collapsed)
+
+# 3. Group genes by function
+system_list <- list(
+  "Haem uptake and utilisation" = c(grep("^chu", colnames(mat_gene), value=TRUE), grep("^hma", colnames(mat_gene), value=TRUE)),
+  "Colibactin"                  = grep("^clb", colnames(mat_gene), value=TRUE),
+  "Enterobactin system"         = grep("^(ent|fep|fes)", colnames(mat_gene), value=TRUE),
+  "Salmochelin system"          = grep("^iro", colnames(mat_gene), value=TRUE),
+  "Aerobactin system"           = grep("^(iuc|iut)", colnames(mat_gene), value=TRUE),
+  "Sit system"                  = grep("^sit", colnames(mat_gene), value=TRUE),
+  "Yersiniabactin system"       = c(grep("^ybt", colnames(mat_gene), value=TRUE), grep("^irp", colnames(mat_gene), value=TRUE), grep("^fyu", colnames(mat_gene), value=TRUE))
+)
+
+ordered_cols <- c()
+col_groups <- c()
+for (sys_name in names(system_list)) {
+  genes_in_sys <- intersect(system_list[[sys_name]], colnames(mat_gene))
+  genes_in_sys <- sort(genes_in_sys)
+  if (length(genes_in_sys) > 0) {
+    ordered_cols <- c(ordered_cols, genes_in_sys)
+    col_groups <- c(col_groups, rep(sys_name, length(genes_in_sys)))
+  }
+}
+mat_final <- mat_gene[, ordered_cols, drop = FALSE]
+group_factor <- factor(col_groups, levels = names(system_list))
+
+# 4. Define metadata & custom order
+metadata_raw <- data.frame(
+  Isolate  = c("C11", "C43", "C52", "C55", "C56", "E17", "E18", "E47", "E55", "E66", "K34", "K59", "R18", "R5", "R8"),
+  ST       = c("ST410", "ST131", "ST131", "ST167", "ST127", "ST648", "ST648", "ST12",  "ST131", "ST131", "ST68", "ST569", "ST127", "ST1642", "ST127"),
+  Phylogroup = c("C", "B2", "B2", "A", "B2", "F", "F", "B2", "B2", "B2", "D", "B2", "B2", "B1", "B2"),
+  Pathotype = c("ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "ExPEC", "unknown*", "ExPEC"),
+  O_type   = c("O8", "O25", "O153", "O89", "O6",  "O8",  "O8",  "O4",  "O25", "O25", "O51", "O46", "O6",  "O8/O71", "O6"),
+  H_type   = c("H9", "H4", "H4",  "H10", "H31", "H4", "H4", "H1", "H4", "H4", "H6",  "H31", "H31", "H7", "H31"),
+  K_locus  = c("KL302", "KL20", "KL2", "KL767", "KL2", "KL301", "KL301", "KL12", "KL114", "KL114", "KL123", "KL1", "KL2", "KL301", "KL14"),
+  stringsAsFactors = FALSE
+) %>% column_to_rownames("Isolate")
+
+# Custom order (better organisation)
+custom_order <- c("E47", "R8", "C56", "R18", "K34", "K59", "E17", "E18", "E66", "E55", "C43", "C52", "C11", "C55", "R5")
+
+mat_final <- mat_final[custom_order, , drop = FALSE]
+metadata_ordered <- metadata_raw[custom_order, ] %>%
+  rownames_to_column("Isolate") %>%
+  rename(`Sequence type` = ST, `O-type` = O_type, `H-type` = H_type, `K locus` = K_locus)
+
+# 5. Generate heatmaps
+heatmap_colors <- c("0" = "#F7F7F7", "1" = "#967BB6")
+
+ht_metadata <- Heatmap(
+  as.matrix(metadata_ordered),
+  name = "metadata",
+  col = c("dummy" = "white"),
+  cluster_rows = FALSE, cluster_columns = FALSE,
+  show_heatmap_legend = FALSE,
+  show_column_names = FALSE,
+  column_split = factor(colnames(metadata_ordered), levels = colnames(metadata_ordered)),
+  column_title_gp = gpar(fontsize = 10, fontface = "plain"),
+  column_title_rot = 90,
+  column_gap = unit(5, "mm"),
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    grid.rect(x, y, width, height, gp = gpar(fill = "white", col = NA))
+    grid.text(as.matrix(metadata_ordered)[i, j], x, y, gp = gpar(fontsize = 9))
+  },
+  width = unit(12, "cm")
+)
+
+ht_genes <- Heatmap(
+  mat_final,
+  name = " ",
+  col = heatmap_colors,
+  cluster_rows = FALSE,
+  show_row_dend = FALSE, cluster_columns = FALSE, show_row_names = FALSE,
+  column_split = group_factor,
+  column_title_rot = 90,
+  column_gap = unit(2, "mm"),
+  column_title_gp = gpar(fontsize = 10, fontface = "plain"),
+  rect_gp = gpar(col = "white", lwd = 0.5),
+  width = unit(10, "cm"),
+  height = unit(10, "cm"),
+  column_names_gp = gpar(fontsize = 9, fontface = "italic", rot = 90, hjust = 1),
+  column_names_side = "top",
+  heatmap_legend_param = list(labels = c("Gene absent", "Gene present"), at = c(0, 1))
+)
+
+ht_list <- ht_metadata + ht_genes
+
+pdf("10_figures/Ghana_ecoli_iron_heatmap.pdf", width = 18, height = 8)
+draw(ht_list)
+
+for (i in 1:ncol(metadata_ordered)) {
+  seekViewport(paste0("metadata_column_title_", i))
+  grid.lines(x = c(0, 1), y = c(0, 0), gp = gpar(lwd = 1))
+  grid.lines(x = c(0, 0), y = c(0, -0.025), gp = gpar(lwd = 1))
+  grid.lines(x = c(1, 1), y = c(0, -0.025), gp = gpar(lwd = 1))
+}
+for (i in 1:length(levels(group_factor))) {
+  seekViewport(paste0(" _column_title_", i))
+  grid.lines(x = c(0, 1), y = c(0, 0), gp = gpar(lwd = 1))
+  grid.lines(x = c(0, 0), y = c(0, -0.025), gp = gpar(lwd = 1))
+  grid.lines(x = c(1, 1), y = c(0, -0.025), gp = gpar(lwd = 1))
+}
+dev.off()
+```
+
+## KpSC (*K. quasipneumoniae*, *K. variicola*): Kleborate
+
+```{.bash filename="scripts/kleborate_kpsc.sh"}
+#!/bin/bash
+# KpSC (K. quasipneumoniae + K. variicola) virulence characterisation with
+# Kleborate.
+
+kleborate \
+  -a 00_assemblies/KQ_*.fasta 00_assemblies/KV_*.fasta \
+  -p kpsc \
+  -o 08_virulence \
+  --trim_headers
+mv 08_virulence/klebsiella_pneumo_complex_output.txt 08_virulence/kleborate_kpsc.tsv
+```
+
+## Troubleshooting: ECTyper O-type failure
+
+For any isolate where ECTyper fails to call an O-type (e.g. isolate C55 in this dataset), use the Pathogenwatch result as primary, and `abricate` with the `ecoh` database as secondary confirmation:
+
+```bash
+abricate --db ecoh 00_assemblies/EC_*.fasta > ecoh_all_ecoli.tsv
+```
+
+---
+
+*Protocol consolidated 26 July 2026 from the individual section documents and code updates. See `NOTES_FOR_REVIEW.md` for a full list of fixes applied and points still needing verification before this is treated as final.*
