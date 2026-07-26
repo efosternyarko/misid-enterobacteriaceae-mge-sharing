@@ -1,7 +1,7 @@
 ---
 title: "Genomic Characterisation of Misidentified Clinical Enterobacteriaceae: Inter-Species Mobile Genetic Element Sharing"
 subtitle: "Full analysis protocol, Southern Ghana tertiary hospitals"
-author: "Cheuk Kiu Liu (Ronnie) · Supervisor: Dr E. Foster-Nyarko"
+author: "Dr E. Foster-Nyarko"
 date: "26 July 2026"
 format:
   html:
