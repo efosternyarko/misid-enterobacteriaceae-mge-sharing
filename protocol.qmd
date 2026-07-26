@@ -5,6 +5,7 @@ author: "Cheuk Kiu Liu (Ronnie) · Supervisor: Dr E. Foster-Nyarko"
 date: "26 July 2026"
 format:
   html:
+    output-file: index.html
     toc: true
     toc-depth: 3
     toc-title: "Contents"
