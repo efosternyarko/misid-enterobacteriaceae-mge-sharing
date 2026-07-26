@@ -3143,7 +3143,7 @@ Important
 <span id="cb24-20"><a href="#cb24-20" aria-hidden="true" tabindex="-1"></a>        chr_fasta <span class="op">=</span> <span class="va">None</span></span>
 <span id="cb24-21"><a href="#cb24-21" aria-hidden="true" tabindex="-1"></a>        isolate_label <span class="op">=</span> <span class="va">None</span></span>
 <span id="cb24-22"><a href="#cb24-22" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> d <span class="kw">in</span> os.listdir(recon_dir):</span>
-<span id="cb24-23"><a href="#cb24-23" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> isolate_base <span class="kw">in</span> d:</span>
+<span id="cb24-23"><a href="#cb24-23" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> d <span class="kw">in</span> isolate_base:</span>
 <span id="cb24-24"><a href="#cb24-24" aria-hidden="true" tabindex="-1"></a>                candidate <span class="op">=</span> os.path.join(recon_dir, d, <span class="st">&quot;chromosome.fasta&quot;</span>)</span>
 <span id="cb24-25"><a href="#cb24-25" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> os.path.exists(candidate):</span>
 <span id="cb24-26"><a href="#cb24-26" aria-hidden="true" tabindex="-1"></a>                    chr_fasta <span class="op">=</span> candidate</span>
@@ -3169,17 +3169,17 @@ Important
 <span id="cb24-46"><a href="#cb24-46" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb24-47"><a href="#cb24-47" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(<span class="st">&quot;Done. Sequences written to&quot;</span>, out_fasta)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
-<div class="callout callout-style-default callout-warning callout-titled">
+<div class="callout callout-style-default callout-note callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
 <i class="callout-icon"></i>
 </div>
 <div class="callout-title-container flex-fill">
-Warning
+Note
 </div>
 </div>
 <div class="callout-body-container callout-body">
-<p><strong>Flagged for review, not yet independently verified</strong>: this script’s isolate-name matching (<code>if isolate_base in d</code>) checks whether the ICEfinder2 result directory name is contained <em>within</em> a shorter <code>01_mob_recon/</code> directory name. Given the ICEfinder2 result directory retains a longer name (including the <code>_chromosome_merged</code> suffix from the merge step) than the <code>01_mob_recon/</code> directory it needs to match against, this containment check runs in the direction that would not normally succeed as a substring match. It is reproduced here unchanged from the working version supplied, since altering matching logic without confirming actual ICEfinder2 output directory naming behaviour risked introducing a different, unverified bug — but this is worth Ronnie/Ebenn checking directly against real output before relying on it. See <code>NOTES_FOR_REVIEW.md</code>.</p>
+<p><strong>Isolate-name matching fixed and confirmed 2026-07-26.</strong> The original supplied version had <code>if isolate_base in d:</code>, checking whether the <em>longer</em> ICEfinder2 result directory name (which retains the <code>_chromosome_merged</code> suffix from the merge step, e.g. <code>EC_E18_Ecoli_chromosome_merged</code>) is contained within the <em>shorter</em> <code>01_mob_recon/</code> directory name (e.g. <code>EC_E18_Ecoli</code>) — a containment check that can never succeed, since a longer string cannot be a substring of a shorter one. Confirmed directly against real output on CLIMB (<code>ls 01_mob_recon/</code> vs <code>ls ICEfinder2_linux/result/</code>): the mob_recon directories are exactly the ICEfinder2 directory names with <code>_chromosome_merged</code> stripped off the end. Corrected to <code>if d in isolate_base:</code> (does the short mob_recon name appear within the long ICEfinder2 name — the direction that actually matches).</p>
 </div>
 </div>
 </section>
@@ -5546,7 +5546,7 @@ Important
 <span id="cb40-786"><a href="#cb40-786" aria-hidden="true" tabindex="-1"></a>        <span class="ex">chr_fasta</span> = None</span>
 <span id="cb40-787"><a href="#cb40-787" aria-hidden="true" tabindex="-1"></a>        <span class="ex">isolate_label</span> = None</span>
 <span id="cb40-788"><a href="#cb40-788" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> d <span class="kw">in</span> os.listdir<span class="er">(</span><span class="ex">recon_dir</span><span class="kw">)</span><span class="bu">:</span></span>
-<span id="cb40-789"><a href="#cb40-789" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> <span class="ex">isolate_base</span> in d:</span>
+<span id="cb40-789"><a href="#cb40-789" aria-hidden="true" tabindex="-1"></a>            <span class="cf">if</span> <span class="ex">d</span> in isolate_base:</span>
 <span id="cb40-790"><a href="#cb40-790" aria-hidden="true" tabindex="-1"></a>                <span class="ex">candidate</span> = os.path.join<span class="er">(</span><span class="ex">recon_dir,</span> d, <span class="st">&quot;chromosome.fasta&quot;</span><span class="kw">)</span></span>
 <span id="cb40-791"><a href="#cb40-791" aria-hidden="true" tabindex="-1"></a>                <span class="cf">if</span> <span class="ex">os.path.exists</span><span class="er">(</span><span class="ex">candidate</span><span class="kw">)</span><span class="bu">:</span></span>
 <span id="cb40-792"><a href="#cb40-792" aria-hidden="true" tabindex="-1"></a>                    <span class="ex">chr_fasta</span> = candidate</span>
@@ -5573,96 +5573,96 @@ Important
 <span id="cb40-813"><a href="#cb40-813" aria-hidden="true" tabindex="-1"></a><span class="ex">print</span><span class="er">(</span><span class="st">&quot;Done. Sequences written to&quot;</span><span class="ex">,</span> out_fasta<span class="kw">)</span></span>
 <span id="cb40-814"><a href="#cb40-814" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span></span>
 <span id="cb40-815"><a href="#cb40-815" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-816"><a href="#cb40-816" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span> {.callout-warning}</span>
-<span id="cb40-817"><a href="#cb40-817" aria-hidden="true" tabindex="-1"></a><span class="ex">**Flagged</span> for review, not yet independently verified<span class="pp">**</span>: this script<span class="st">&#39;s isolate-name matching (`if isolate_base in d`) checks whether the ICEfinder2 result directory name is contained *within* a shorter `01_mob_recon/` directory name. Given the ICEfinder2 result directory retains a longer name (including the `_chromosome_merged` suffix from the merge step) than the `01_mob_recon/` directory it needs to match against, this containment check runs in the direction that would not normally succeed as a substring match. It is reproduced here unchanged from the working version supplied, since altering matching logic without confirming actual ICEfinder2 output directory naming behaviour risked introducing a different, unverified bug — but this is worth Ronnie/Ebenn checking directly against real output before relying on it. See `NOTES_FOR_REVIEW.md`.</span></span>
-<span id="cb40-818"><a href="#cb40-818" aria-hidden="true" tabindex="-1"></a><span class="st">:::</span></span>
+<span id="cb40-816"><a href="#cb40-816" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span> {.callout-note}</span>
+<span id="cb40-817"><a href="#cb40-817" aria-hidden="true" tabindex="-1"></a><span class="ex">**Isolate-name</span> matching fixed and confirmed 2026-07-26.<span class="pp">**</span> The original supplied version had <span class="kw">`</span>if isolate_base in d:<span class="kw">`</span><span class="ex">,</span> checking whether the <span class="pp">*</span>longer<span class="pp">*</span> ICEfinder2 result directory name <span class="er">(</span><span class="fu">which</span> retains the <span class="kw">`</span><span class="ex">_chromosome_merged</span><span class="kw">`</span> suffix from the merge step, e.g. <span class="kw">`</span><span class="ex">EC_E18_Ecoli_chromosome_merged</span><span class="kw">`)</span> <span class="ex">is</span> contained within the <span class="pp">*</span>shorter<span class="pp">*</span> <span class="kw">`</span>01_mob_recon/<span class="kw">`</span> <span class="ex">directory</span> name <span class="er">(</span><span class="ex">e.g.</span> <span class="kw">`</span><span class="ex">EC_E18_Ecoli</span><span class="kw">`)</span> <span class="ex">—</span> a containment check that can never succeed, since a longer string cannot be a substring of a shorter one. Confirmed directly against real output on CLIMB <span class="er">(</span><span class="kw">`</span><span class="fu">ls</span> 01_mob_recon/<span class="kw">`</span> vs <span class="kw">`</span><span class="fu">ls</span> ICEfinder2_linux/result/<span class="kw">`)</span><span class="bu">:</span> the mob_recon directories are exactly the ICEfinder2 directory names with <span class="kw">`</span>_chromosome_merged<span class="kw">`</span> <span class="ex">stripped</span> off the end. Corrected to <span class="kw">`</span>if d in isolate_base:<span class="kw">`</span> <span class="kw">(</span><span class="ex">does</span> the short mob_recon name appear within the long ICEfinder2 name — the direction that actually matches<span class="kw">)</span><span class="bu">.</span></span>
+<span id="cb40-818"><a href="#cb40-818" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span></span>
 <span id="cb40-819"><a href="#cb40-819" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-820"><a href="#cb40-820" aria-hidden="true" tabindex="-1"></a><span class="st">## Step 4: Pairwise BLAST comparison of ICE sequences</span></span>
+<span id="cb40-820"><a href="#cb40-820" aria-hidden="true" tabindex="-1"></a><span class="co">## Step 4: Pairwise BLAST comparison of ICE sequences</span></span>
 <span id="cb40-821"><a href="#cb40-821" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-822"><a href="#cb40-822" aria-hidden="true" tabindex="-1"></a><span class="st">Identify shared ICEs across species at ≥95% nucleotide identity and ≥80% query coverage:</span></span>
+<span id="cb40-822"><a href="#cb40-822" aria-hidden="true" tabindex="-1"></a><span class="ex">Identify</span> shared ICEs across species at ≥95% nucleotide identity and ≥80% query coverage:</span>
 <span id="cb40-823"><a href="#cb40-823" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-824"><a href="#cb40-824" aria-hidden="true" tabindex="-1"></a><span class="st">```{.bash filename=&quot;scripts/ice_blast_pairwise.sh&quot;}</span></span>
-<span id="cb40-825"><a href="#cb40-825" aria-hidden="true" tabindex="-1"></a><span class="st">#!/bin/bash</span></span>
-<span id="cb40-826"><a href="#cb40-826" aria-hidden="true" tabindex="-1"></a><span class="st"># Pairwise all-vs-all BLASTn of extracted ICE sequences to identify shared</span></span>
-<span id="cb40-827"><a href="#cb40-827" aria-hidden="true" tabindex="-1"></a><span class="st"># ICEs across species at &gt;=95% nucleotide identity and &gt;=80% query coverage.</span></span>
+<span id="cb40-824"><a href="#cb40-824" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span>{.bash filename=<span class="st">&quot;scripts/ice_blast_pairwise.sh&quot;</span>}</span>
+<span id="cb40-825"><a href="#cb40-825" aria-hidden="true" tabindex="-1"></a><span class="co">#!/bin/bash</span></span>
+<span id="cb40-826"><a href="#cb40-826" aria-hidden="true" tabindex="-1"></a><span class="co"># Pairwise all-vs-all BLASTn of extracted ICE sequences to identify shared</span></span>
+<span id="cb40-827"><a href="#cb40-827" aria-hidden="true" tabindex="-1"></a><span class="co"># ICEs across species at &gt;=95% nucleotide identity and &gt;=80% query coverage.</span></span>
 <span id="cb40-828"><a href="#cb40-828" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-829"><a href="#cb40-829" aria-hidden="true" tabindex="-1"></a><span class="st">makeblastdb \</span></span>
-<span id="cb40-830"><a href="#cb40-830" aria-hidden="true" tabindex="-1"></a><span class="st">    -in 03_MGE_sharing/03_ICE_detection/all_ICE_sequences.fasta \</span></span>
-<span id="cb40-831"><a href="#cb40-831" aria-hidden="true" tabindex="-1"></a><span class="st">    -dbtype nucl \</span></span>
-<span id="cb40-832"><a href="#cb40-832" aria-hidden="true" tabindex="-1"></a><span class="st">    -out 03_MGE_sharing/04_ICE_blast/ICE_db</span></span>
+<span id="cb40-829"><a href="#cb40-829" aria-hidden="true" tabindex="-1"></a><span class="ex">makeblastdb</span> <span class="dt">\</span></span>
+<span id="cb40-830"><a href="#cb40-830" aria-hidden="true" tabindex="-1"></a>    <span class="at">-in</span> 03_MGE_sharing/03_ICE_detection/all_ICE_sequences.fasta <span class="dt">\</span></span>
+<span id="cb40-831"><a href="#cb40-831" aria-hidden="true" tabindex="-1"></a>    <span class="at">-dbtype</span> nucl <span class="dt">\</span></span>
+<span id="cb40-832"><a href="#cb40-832" aria-hidden="true" tabindex="-1"></a>    <span class="at">-out</span> 03_MGE_sharing/04_ICE_blast/ICE_db</span>
 <span id="cb40-833"><a href="#cb40-833" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-834"><a href="#cb40-834" aria-hidden="true" tabindex="-1"></a><span class="st">blastn \</span></span>
-<span id="cb40-835"><a href="#cb40-835" aria-hidden="true" tabindex="-1"></a><span class="st">    -query 03_MGE_sharing/03_ICE_detection/all_ICE_sequences.fasta \</span></span>
-<span id="cb40-836"><a href="#cb40-836" aria-hidden="true" tabindex="-1"></a><span class="st">    -db 03_MGE_sharing/04_ICE_blast/ICE_db \</span></span>
-<span id="cb40-837"><a href="#cb40-837" aria-hidden="true" tabindex="-1"></a><span class="st">    -perc_identity 95 \</span></span>
-<span id="cb40-838"><a href="#cb40-838" aria-hidden="true" tabindex="-1"></a><span class="st">    -qcov_hsp_perc 80 \</span></span>
-<span id="cb40-839"><a href="#cb40-839" aria-hidden="true" tabindex="-1"></a><span class="st">    -outfmt &quot;6 qseqid sseqid pident qcovs length mismatch gapopen qstart qend sstart send evalue bitscore&quot; \</span></span>
-<span id="cb40-840"><a href="#cb40-840" aria-hidden="true" tabindex="-1"></a><span class="st">    -out 03_MGE_sharing/04_ICE_blast/ICE_pairwise_blast.tsv \</span></span>
-<span id="cb40-841"><a href="#cb40-841" aria-hidden="true" tabindex="-1"></a><span class="st">    -num_threads 8</span></span>
+<span id="cb40-834"><a href="#cb40-834" aria-hidden="true" tabindex="-1"></a><span class="ex">blastn</span> <span class="dt">\</span></span>
+<span id="cb40-835"><a href="#cb40-835" aria-hidden="true" tabindex="-1"></a>    <span class="at">-query</span> 03_MGE_sharing/03_ICE_detection/all_ICE_sequences.fasta <span class="dt">\</span></span>
+<span id="cb40-836"><a href="#cb40-836" aria-hidden="true" tabindex="-1"></a>    <span class="at">-db</span> 03_MGE_sharing/04_ICE_blast/ICE_db <span class="dt">\</span></span>
+<span id="cb40-837"><a href="#cb40-837" aria-hidden="true" tabindex="-1"></a>    <span class="at">-perc_identity</span> 95 <span class="dt">\</span></span>
+<span id="cb40-838"><a href="#cb40-838" aria-hidden="true" tabindex="-1"></a>    <span class="at">-qcov_hsp_perc</span> 80 <span class="dt">\</span></span>
+<span id="cb40-839"><a href="#cb40-839" aria-hidden="true" tabindex="-1"></a>    <span class="at">-outfmt</span> <span class="st">&quot;6 qseqid sseqid pident qcovs length mismatch gapopen qstart qend sstart send evalue bitscore&quot;</span> <span class="dt">\</span></span>
+<span id="cb40-840"><a href="#cb40-840" aria-hidden="true" tabindex="-1"></a>    <span class="at">-out</span> 03_MGE_sharing/04_ICE_blast/ICE_pairwise_blast.tsv <span class="dt">\</span></span>
+<span id="cb40-841"><a href="#cb40-841" aria-hidden="true" tabindex="-1"></a>    <span class="at">-num_threads</span> 8</span>
 <span id="cb40-842"><a href="#cb40-842" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-843"><a href="#cb40-843" aria-hidden="true" tabindex="-1"></a><span class="st"># Remove self-hits</span></span>
-<span id="cb40-844"><a href="#cb40-844" aria-hidden="true" tabindex="-1"></a><span class="st">awk &#39;</span><span class="va">$1</span> != <span class="va">$2</span><span class="st">&#39; 03_MGE_sharing/04_ICE_blast/ICE_pairwise_blast.tsv \</span></span>
-<span id="cb40-845"><a href="#cb40-845" aria-hidden="true" tabindex="-1"></a><span class="st">    &gt; 03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv</span></span>
-<span id="cb40-846"><a href="#cb40-846" aria-hidden="true" tabindex="-1"></a><span class="st">```</span></span>
+<span id="cb40-843"><a href="#cb40-843" aria-hidden="true" tabindex="-1"></a><span class="co"># Remove self-hits</span></span>
+<span id="cb40-844"><a href="#cb40-844" aria-hidden="true" tabindex="-1"></a><span class="fu">awk</span> <span class="st">&#39;$1 != $2&#39;</span> 03_MGE_sharing/04_ICE_blast/ICE_pairwise_blast.tsv <span class="dt">\</span></span>
+<span id="cb40-845"><a href="#cb40-845" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> 03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv</span>
+<span id="cb40-846"><a href="#cb40-846" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span></span>
 <span id="cb40-847"><a href="#cb40-847" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-848"><a href="#cb40-848" aria-hidden="true" tabindex="-1"></a><span class="st">```{.r filename=&quot;scripts/parse_inter_species_ice_hits.R&quot;}</span></span>
-<span id="cb40-849"><a href="#cb40-849" aria-hidden="true" tabindex="-1"></a><span class="st">library(dplyr)</span></span>
-<span id="cb40-850"><a href="#cb40-850" aria-hidden="true" tabindex="-1"></a><span class="st">library(readr)</span></span>
+<span id="cb40-848"><a href="#cb40-848" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span>{.r filename=<span class="st">&quot;scripts/parse_inter_species_ice_hits.R&quot;</span>}</span>
+<span id="cb40-849"><a href="#cb40-849" aria-hidden="true" tabindex="-1"></a><span class="ex">library</span><span class="er">(</span><span class="ex">dplyr</span><span class="kw">)</span></span>
+<span id="cb40-850"><a href="#cb40-850" aria-hidden="true" tabindex="-1"></a><span class="ex">library</span><span class="er">(</span><span class="ex">readr</span><span class="kw">)</span></span>
 <span id="cb40-851"><a href="#cb40-851" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-852"><a href="#cb40-852" aria-hidden="true" tabindex="-1"></a><span class="st">blast &lt;- read_tsv(&quot;03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv&quot;,</span></span>
-<span id="cb40-853"><a href="#cb40-853" aria-hidden="true" tabindex="-1"></a><span class="st">                  col_names = c(&quot;qseqid&quot;,&quot;sseqid&quot;,&quot;pident&quot;,&quot;qcovs&quot;,&quot;length&quot;,</span></span>
-<span id="cb40-854"><a href="#cb40-854" aria-hidden="true" tabindex="-1"></a><span class="st">                                &quot;mismatch&quot;,&quot;gapopen&quot;,&quot;qstart&quot;,&quot;qend&quot;,</span></span>
-<span id="cb40-855"><a href="#cb40-855" aria-hidden="true" tabindex="-1"></a><span class="st">                                &quot;sstart&quot;,&quot;send&quot;,&quot;evalue&quot;,&quot;bitscore&quot;))</span></span>
+<span id="cb40-852"><a href="#cb40-852" aria-hidden="true" tabindex="-1"></a><span class="ex">blast</span> <span class="op">&lt;</span>- read_tsv<span class="er">(</span><span class="st">&quot;03_MGE_sharing/04_ICE_blast/ICE_blast_no_selfhits.tsv&quot;</span><span class="ex">,</span></span>
+<span id="cb40-853"><a href="#cb40-853" aria-hidden="true" tabindex="-1"></a>                  <span class="ex">col_names</span> = c<span class="er">(</span><span class="st">&quot;qseqid&quot;</span><span class="ex">,</span><span class="st">&quot;sseqid&quot;</span><span class="ex">,</span><span class="st">&quot;pident&quot;</span><span class="ex">,</span><span class="st">&quot;qcovs&quot;</span><span class="ex">,</span><span class="st">&quot;length&quot;</span><span class="ex">,</span></span>
+<span id="cb40-854"><a href="#cb40-854" aria-hidden="true" tabindex="-1"></a>                                <span class="st">&quot;mismatch&quot;</span><span class="ex">,</span><span class="st">&quot;gapopen&quot;</span><span class="ex">,</span><span class="st">&quot;qstart&quot;</span><span class="ex">,</span><span class="st">&quot;qend&quot;</span><span class="ex">,</span></span>
+<span id="cb40-855"><a href="#cb40-855" aria-hidden="true" tabindex="-1"></a>                                <span class="st">&quot;sstart&quot;</span><span class="ex">,</span><span class="st">&quot;send&quot;</span><span class="ex">,</span><span class="st">&quot;evalue&quot;</span><span class="ex">,</span><span class="st">&quot;bitscore&quot;</span><span class="kw">))</span></span>
 <span id="cb40-856"><a href="#cb40-856" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-857"><a href="#cb40-857" aria-hidden="true" tabindex="-1"></a><span class="st">blast &lt;- blast %&gt;%</span></span>
-<span id="cb40-858"><a href="#cb40-858" aria-hidden="true" tabindex="-1"></a><span class="st">    mutate(</span></span>
-<span id="cb40-859"><a href="#cb40-859" aria-hidden="true" tabindex="-1"></a><span class="st">        query_isolate   = sub(&quot;__ICE.*&quot;, &quot;&quot;, qseqid),</span></span>
-<span id="cb40-860"><a href="#cb40-860" aria-hidden="true" tabindex="-1"></a><span class="st">        subject_isolate = sub(&quot;__ICE.*&quot;, &quot;&quot;, sseqid),</span></span>
-<span id="cb40-861"><a href="#cb40-861" aria-hidden="true" tabindex="-1"></a><span class="st">        query_species   = case_when(</span></span>
-<span id="cb40-862"><a href="#cb40-862" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Ecoli&quot;,            query_isolate) ~ &quot;E. coli&quot;,</span></span>
-<span id="cb40-863"><a href="#cb40-863" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Kpneumoniae&quot;,      query_isolate) ~ &quot;K. pneumoniae&quot;,</span></span>
-<span id="cb40-864"><a href="#cb40-864" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Kquasipneumoniae&quot;, query_isolate) ~ &quot;K. quasipneumoniae&quot;,</span></span>
-<span id="cb40-865"><a href="#cb40-865" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Kvariicola&quot;,       query_isolate) ~ &quot;K. variicola&quot;,</span></span>
-<span id="cb40-866"><a href="#cb40-866" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;aerogenes&quot;,        query_isolate) ~ &quot;K. aerogenes&quot;,</span></span>
-<span id="cb40-867"><a href="#cb40-867" aria-hidden="true" tabindex="-1"></a><span class="st">            TRUE ~ &quot;Unknown&quot;</span></span>
-<span id="cb40-868"><a href="#cb40-868" aria-hidden="true" tabindex="-1"></a><span class="st">        ),</span></span>
-<span id="cb40-869"><a href="#cb40-869" aria-hidden="true" tabindex="-1"></a><span class="st">        subject_species = case_when(</span></span>
-<span id="cb40-870"><a href="#cb40-870" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Ecoli&quot;,            subject_isolate) ~ &quot;E. coli&quot;,</span></span>
-<span id="cb40-871"><a href="#cb40-871" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Kpneumoniae&quot;,      subject_isolate) ~ &quot;K. pneumoniae&quot;,</span></span>
-<span id="cb40-872"><a href="#cb40-872" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Kquasipneumoniae&quot;, subject_isolate) ~ &quot;K. quasipneumoniae&quot;,</span></span>
-<span id="cb40-873"><a href="#cb40-873" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;Kvariicola&quot;,       subject_isolate) ~ &quot;K. variicola&quot;,</span></span>
-<span id="cb40-874"><a href="#cb40-874" aria-hidden="true" tabindex="-1"></a><span class="st">            grepl(&quot;aerogenes&quot;,        subject_isolate) ~ &quot;K. aerogenes&quot;,</span></span>
-<span id="cb40-875"><a href="#cb40-875" aria-hidden="true" tabindex="-1"></a><span class="st">            TRUE ~ &quot;Unknown&quot;</span></span>
-<span id="cb40-876"><a href="#cb40-876" aria-hidden="true" tabindex="-1"></a><span class="st">        )</span></span>
-<span id="cb40-877"><a href="#cb40-877" aria-hidden="true" tabindex="-1"></a><span class="st">    ) %&gt;%</span></span>
-<span id="cb40-878"><a href="#cb40-878" aria-hidden="true" tabindex="-1"></a><span class="st">    filter(query_isolate != subject_isolate)</span></span>
+<span id="cb40-857"><a href="#cb40-857" aria-hidden="true" tabindex="-1"></a><span class="ex">blast</span> <span class="op">&lt;</span>- blast %<span class="op">&gt;</span>%</span>
+<span id="cb40-858"><a href="#cb40-858" aria-hidden="true" tabindex="-1"></a>    <span class="ex">mutate</span><span class="er">(</span></span>
+<span id="cb40-859"><a href="#cb40-859" aria-hidden="true" tabindex="-1"></a>        <span class="ex">query_isolate</span>   = sub<span class="er">(</span><span class="st">&quot;__ICE.*&quot;</span><span class="ex">,</span> <span class="st">&quot;&quot;</span>, qseqid<span class="kw">)</span><span class="ex">,</span></span>
+<span id="cb40-860"><a href="#cb40-860" aria-hidden="true" tabindex="-1"></a>        <span class="ex">subject_isolate</span> = sub<span class="er">(</span><span class="st">&quot;__ICE.*&quot;</span><span class="ex">,</span> <span class="st">&quot;&quot;</span>, sseqid<span class="kw">)</span><span class="ex">,</span></span>
+<span id="cb40-861"><a href="#cb40-861" aria-hidden="true" tabindex="-1"></a>        <span class="ex">query_species</span>   = case_when<span class="er">(</span></span>
+<span id="cb40-862"><a href="#cb40-862" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Ecoli&quot;</span><span class="ex">,</span>            query_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;E. coli&quot;</span>,</span>
+<span id="cb40-863"><a href="#cb40-863" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Kpneumoniae&quot;</span><span class="ex">,</span>      query_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. pneumoniae&quot;</span>,</span>
+<span id="cb40-864"><a href="#cb40-864" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Kquasipneumoniae&quot;</span><span class="ex">,</span> query_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. quasipneumoniae&quot;</span>,</span>
+<span id="cb40-865"><a href="#cb40-865" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Kvariicola&quot;</span><span class="ex">,</span>       query_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. variicola&quot;</span>,</span>
+<span id="cb40-866"><a href="#cb40-866" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;aerogenes&quot;</span><span class="ex">,</span>        query_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. aerogenes&quot;</span>,</span>
+<span id="cb40-867"><a href="#cb40-867" aria-hidden="true" tabindex="-1"></a>            <span class="ex">TRUE</span> ~ <span class="st">&quot;Unknown&quot;</span></span>
+<span id="cb40-868"><a href="#cb40-868" aria-hidden="true" tabindex="-1"></a>        <span class="kw">)</span><span class="ex">,</span></span>
+<span id="cb40-869"><a href="#cb40-869" aria-hidden="true" tabindex="-1"></a>        <span class="ex">subject_species</span> = case_when<span class="er">(</span></span>
+<span id="cb40-870"><a href="#cb40-870" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Ecoli&quot;</span><span class="ex">,</span>            subject_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;E. coli&quot;</span>,</span>
+<span id="cb40-871"><a href="#cb40-871" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Kpneumoniae&quot;</span><span class="ex">,</span>      subject_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. pneumoniae&quot;</span>,</span>
+<span id="cb40-872"><a href="#cb40-872" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Kquasipneumoniae&quot;</span><span class="ex">,</span> subject_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. quasipneumoniae&quot;</span>,</span>
+<span id="cb40-873"><a href="#cb40-873" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;Kvariicola&quot;</span><span class="ex">,</span>       subject_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. variicola&quot;</span>,</span>
+<span id="cb40-874"><a href="#cb40-874" aria-hidden="true" tabindex="-1"></a>            <span class="ex">grepl</span><span class="er">(</span><span class="st">&quot;aerogenes&quot;</span><span class="ex">,</span>        subject_isolate<span class="kw">)</span> <span class="ex">~</span> <span class="st">&quot;K. aerogenes&quot;</span>,</span>
+<span id="cb40-875"><a href="#cb40-875" aria-hidden="true" tabindex="-1"></a>            <span class="ex">TRUE</span> ~ <span class="st">&quot;Unknown&quot;</span></span>
+<span id="cb40-876"><a href="#cb40-876" aria-hidden="true" tabindex="-1"></a>        <span class="kw">)</span></span>
+<span id="cb40-877"><a href="#cb40-877" aria-hidden="true" tabindex="-1"></a>    <span class="kw">)</span> <span class="ex">%</span><span class="op">&gt;</span>%</span>
+<span id="cb40-878"><a href="#cb40-878" aria-hidden="true" tabindex="-1"></a>    <span class="ex">filter</span><span class="er">(</span><span class="ex">query_isolate</span> != subject_isolate<span class="kw">)</span></span>
 <span id="cb40-879"><a href="#cb40-879" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-880"><a href="#cb40-880" aria-hidden="true" tabindex="-1"></a><span class="st">inter_species_ICE &lt;- blast %&gt;%</span></span>
-<span id="cb40-881"><a href="#cb40-881" aria-hidden="true" tabindex="-1"></a><span class="st">    filter(query_species != subject_species) %&gt;%</span></span>
-<span id="cb40-882"><a href="#cb40-882" aria-hidden="true" tabindex="-1"></a><span class="st">    arrange(desc(pident))</span></span>
+<span id="cb40-880"><a href="#cb40-880" aria-hidden="true" tabindex="-1"></a><span class="ex">inter_species_ICE</span> <span class="op">&lt;</span>- blast %<span class="op">&gt;</span>%</span>
+<span id="cb40-881"><a href="#cb40-881" aria-hidden="true" tabindex="-1"></a>    <span class="ex">filter</span><span class="er">(</span><span class="ex">query_species</span> != subject_species<span class="kw">)</span> <span class="ex">%</span><span class="op">&gt;</span>%</span>
+<span id="cb40-882"><a href="#cb40-882" aria-hidden="true" tabindex="-1"></a>    <span class="ex">arrange</span><span class="er">(</span><span class="ex">desc</span><span class="er">(</span><span class="ex">pident</span><span class="kw">))</span></span>
 <span id="cb40-883"><a href="#cb40-883" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-884"><a href="#cb40-884" aria-hidden="true" tabindex="-1"></a><span class="st">write_csv(inter_species_ICE, &quot;03_MGE_sharing/04_ICE_blast/inter_species_ICE_hits.csv&quot;)</span></span>
-<span id="cb40-885"><a href="#cb40-885" aria-hidden="true" tabindex="-1"></a><span class="st">```</span></span>
+<span id="cb40-884"><a href="#cb40-884" aria-hidden="true" tabindex="-1"></a><span class="ex">write_csv</span><span class="er">(</span><span class="ex">inter_species_ICE,</span> <span class="st">&quot;03_MGE_sharing/04_ICE_blast/inter_species_ICE_hits.csv&quot;</span><span class="kw">)</span></span>
+<span id="cb40-885"><a href="#cb40-885" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span></span>
 <span id="cb40-886"><a href="#cb40-886" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-887"><a href="#cb40-887" aria-hidden="true" tabindex="-1"></a><span class="st">## Step 5: Integron detection</span></span>
+<span id="cb40-887"><a href="#cb40-887" aria-hidden="true" tabindex="-1"></a><span class="co">## Step 5: Integron detection</span></span>
 <span id="cb40-888"><a href="#cb40-888" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-889"><a href="#cb40-889" aria-hidden="true" tabindex="-1"></a><span class="st">Class 1 integrons are among the most important AMR gene dissemination mechanisms in clinical Enterobacterales — detecting shared cassette arrays across species strengthens the horizontal transfer evidence.</span></span>
+<span id="cb40-889"><a href="#cb40-889" aria-hidden="true" tabindex="-1"></a><span class="ex">Class</span> 1 integrons are among the most important AMR gene dissemination mechanisms in clinical Enterobacterales — detecting shared cassette arrays across species strengthens the horizontal transfer evidence.</span>
 <span id="cb40-890"><a href="#cb40-890" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-891"><a href="#cb40-891" aria-hidden="true" tabindex="-1"></a><span class="st">::: {.callout-important}</span></span>
-<span id="cb40-892"><a href="#cb40-892" aria-hidden="true" tabindex="-1"></a><span class="st">**Fix applied.** IntegronFinder nests its own results subdirectory inside whatever `--outdir` you give it, so the true isolate name sits *two* directory levels above the `.integrons` summary file, not one. Extracting the isolate name with a single `basename(dirname(...))` returns IntegronFinder&#39;</span>s own internal subdirectory name instead. The script below uses <span class="kw">`</span>find<span class="kw">`</span> <span class="ex">with</span> a double-<span class="kw">`</span>dirname<span class="kw">`</span> <span class="ex">to</span> reach the correct level, and writes to <span class="kw">`</span>all_integrons_combined_clean.tsv<span class="kw">`</span> <span class="kw">(</span><span class="ex">distinguishing</span> it from an earlier, incorrectly-parsed version<span class="kw">)</span><span class="bu">.</span></span>
-<span id="cb40-893"><a href="#cb40-893" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span></span>
+<span id="cb40-891"><a href="#cb40-891" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span> {.callout-important}</span>
+<span id="cb40-892"><a href="#cb40-892" aria-hidden="true" tabindex="-1"></a><span class="ex">**Fix</span> applied.<span class="pp">**</span> IntegronFinder nests its own results subdirectory inside whatever <span class="kw">`</span><span class="at">--outdir</span><span class="kw">`</span> <span class="ex">you</span> give it, so the true isolate name sits <span class="pp">*</span>two<span class="pp">*</span> directory levels above the <span class="kw">`</span>.integrons<span class="kw">`</span> <span class="ex">summary</span> file, not one. Extracting the isolate name with a single <span class="kw">`</span>basename<span class="er">(</span><span class="fu">dirname</span><span class="er">(</span><span class="ex">...</span><span class="kw">))`</span> <span class="ex">returns</span> IntegronFinder<span class="st">&#39;s own internal subdirectory name instead. The script below uses `find` with a double-`dirname` to reach the correct level, and writes to `all_integrons_combined_clean.tsv` (distinguishing it from an earlier, incorrectly-parsed version).</span></span>
+<span id="cb40-893"><a href="#cb40-893" aria-hidden="true" tabindex="-1"></a><span class="st">:::</span></span>
 <span id="cb40-894"><a href="#cb40-894" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-895"><a href="#cb40-895" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span>{.bash filename=<span class="st">&quot;scripts/integron_finder_and_combine.sh&quot;</span>}</span>
-<span id="cb40-896"><a href="#cb40-896" aria-hidden="true" tabindex="-1"></a><span class="co">#!/bin/bash</span></span>
-<span id="cb40-897"><a href="#cb40-897" aria-hidden="true" tabindex="-1"></a><span class="co"># Run IntegronFinder on chromosome and plasmid sequences, then combine all</span></span>
-<span id="cb40-898"><a href="#cb40-898" aria-hidden="true" tabindex="-1"></a><span class="co"># per-isolate summaries into one TSV.</span></span>
-<span id="cb40-899"><a href="#cb40-899" aria-hidden="true" tabindex="-1"></a><span class="co">#</span></span>
-<span id="cb40-900"><a href="#cb40-900" aria-hidden="true" tabindex="-1"></a><span class="co"># FIX APPLIED: IntegronFinder nests its own results subdirectory inside</span></span>
-<span id="cb40-901"><a href="#cb40-901" aria-hidden="true" tabindex="-1"></a><span class="co"># whatever --outdir you give it (e.g. Result_Integron_Finder_&lt;name&gt;/), so</span></span>
-<span id="cb40-902"><a href="#cb40-902" aria-hidden="true" tabindex="-1"></a><span class="co"># the true isolate name is TWO directory levels above the .integrons file,</span></span>
-<span id="cb40-903"><a href="#cb40-903" aria-hidden="true" tabindex="-1"></a><span class="co"># not one. The original single-dirname approach</span></span>
-<span id="cb40-904"><a href="#cb40-904" aria-hidden="true" tabindex="-1"></a><span class="co"># (`isolate=$(basename &quot;$(dirname &quot;$summary&quot;)&quot;)`) returned IntegronFinder&#39;s</span></span>
-<span id="cb40-905"><a href="#cb40-905" aria-hidden="true" tabindex="-1"></a><span class="co"># internal subdirectory name instead of the isolate name. Using `find`</span></span>
+<span id="cb40-895"><a href="#cb40-895" aria-hidden="true" tabindex="-1"></a><span class="st">```{.bash filename=&quot;scripts/integron_finder_and_combine.sh&quot;}</span></span>
+<span id="cb40-896"><a href="#cb40-896" aria-hidden="true" tabindex="-1"></a><span class="st">#!/bin/bash</span></span>
+<span id="cb40-897"><a href="#cb40-897" aria-hidden="true" tabindex="-1"></a><span class="st"># Run IntegronFinder on chromosome and plasmid sequences, then combine all</span></span>
+<span id="cb40-898"><a href="#cb40-898" aria-hidden="true" tabindex="-1"></a><span class="st"># per-isolate summaries into one TSV.</span></span>
+<span id="cb40-899"><a href="#cb40-899" aria-hidden="true" tabindex="-1"></a><span class="st">#</span></span>
+<span id="cb40-900"><a href="#cb40-900" aria-hidden="true" tabindex="-1"></a><span class="st"># FIX APPLIED: IntegronFinder nests its own results subdirectory inside</span></span>
+<span id="cb40-901"><a href="#cb40-901" aria-hidden="true" tabindex="-1"></a><span class="st"># whatever --outdir you give it (e.g. Result_Integron_Finder_&lt;name&gt;/), so</span></span>
+<span id="cb40-902"><a href="#cb40-902" aria-hidden="true" tabindex="-1"></a><span class="st"># the true isolate name is TWO directory levels above the .integrons file,</span></span>
+<span id="cb40-903"><a href="#cb40-903" aria-hidden="true" tabindex="-1"></a><span class="st"># not one. The original single-dirname approach</span></span>
+<span id="cb40-904"><a href="#cb40-904" aria-hidden="true" tabindex="-1"></a><span class="st"># (`isolate=$(basename &quot;$(dirname &quot;$summary&quot;)&quot;)`) returned IntegronFinder&#39;</span>s</span>
+<span id="cb40-905"><a href="#cb40-905" aria-hidden="true" tabindex="-1"></a><span class="co"># internal subdirectory name instead of the isolate name. Using </span><span class="kw">`</span>find<span class="kw">`</span></span>
 <span id="cb40-906"><a href="#cb40-906" aria-hidden="true" tabindex="-1"></a><span class="co"># with double-dirname fixes this.</span></span>
 <span id="cb40-907"><a href="#cb40-907" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb40-908"><a href="#cb40-908" aria-hidden="true" tabindex="-1"></a><span class="co"># Run IntegronFinder on chromosome sequences</span></span>
@@ -5697,7 +5697,7 @@ Important
 <span id="cb40-937"><a href="#cb40-937" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb40-938"><a href="#cb40-938" aria-hidden="true" tabindex="-1"></a><span class="co">## Step 6: Network visualisation</span></span>
 <span id="cb40-939"><a href="#cb40-939" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-940"><a href="#cb40-940" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span>{.r filename=<span class="st">&quot;scripts/build_inter_species_network.R&quot;</span>}</span>
+<span id="cb40-940"><a href="#cb40-940" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span><span class="ex">{.r</span> filename=<span class="st">&quot;scripts/build_inter_species_network.R&quot;</span>}</span>
 <span id="cb40-941"><a href="#cb40-941" aria-hidden="true" tabindex="-1"></a><span class="co"># Build and plot the inter-species MGE sharing network (plasmid clusters +</span></span>
 <span id="cb40-942"><a href="#cb40-942" aria-hidden="true" tabindex="-1"></a><span class="co"># ICE BLAST hits) across all 126 isolates.</span></span>
 <span id="cb40-943"><a href="#cb40-943" aria-hidden="true" tabindex="-1"></a><span class="co">#</span></span>
@@ -5707,7 +5707,7 @@ Important
 <span id="cb40-947"><a href="#cb40-947" aria-hidden="true" tabindex="-1"></a><span class="co">#     did not, creating phantom duplicate nodes for the same real isolate.</span></span>
 <span id="cb40-948"><a href="#cb40-948" aria-hidden="true" tabindex="-1"></a><span class="co">#     Fixed by normalising every isolate reference down to its base ID with</span></span>
 <span id="cb40-949"><a href="#cb40-949" aria-hidden="true" tabindex="-1"></a><span class="co">#     a shared helper that strips the species suffix and anything after it.</span></span>
-<span id="cb40-950"><a href="#cb40-950" aria-hidden="true" tabindex="-1"></a><span class="co">#  2. Legend label mismatch: `labels=` in scale_edge_colour_manual was an</span></span>
+<span id="cb40-950"><a href="#cb40-950" aria-hidden="true" tabindex="-1"></a><span class="co">#  2. Legend label mismatch: </span><span class="kw">`</span>labels=<span class="kw">`</span> <span class="er">in</span> <span class="ex">scale_edge_colour_manual</span> was an</span>
 <span id="cb40-951"><a href="#cb40-951" aria-hidden="true" tabindex="-1"></a><span class="co">#     unnamed positional vector, silently swapping which label went with</span></span>
 <span id="cb40-952"><a href="#cb40-952" aria-hidden="true" tabindex="-1"></a><span class="co">#     which colour. Fixed with a named vector keyed to the real edge_type</span></span>
 <span id="cb40-953"><a href="#cb40-953" aria-hidden="true" tabindex="-1"></a><span class="co">#     values (&quot;plasmid&quot;, &quot;ICE&quot;).</span></span>
@@ -5833,15 +5833,15 @@ Important
 <span id="cb40-1073"><a href="#cb40-1073" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span> {.callout-important}</span>
 <span id="cb40-1074"><a href="#cb40-1074" aria-hidden="true" tabindex="-1"></a><span class="ex">**Two</span> fixes applied to the network-building code, both described in comments in the script above:<span class="pp">**</span></span>
 <span id="cb40-1075"><a href="#cb40-1075" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-1076"><a href="#cb40-1076" aria-hidden="true" tabindex="-1"></a><span class="ex">1.</span> <span class="pp">**</span>Duplicate node bug.<span class="pp">**</span> Isolate labels derived from ICE BLAST hits retained suffix cruft <span class="er">(</span><span class="ex">e.g.</span> <span class="kw">`</span><span class="ex">_chromosome_merged</span><span class="kw">`)</span> <span class="ex">that</span> labels derived from <span class="kw">`</span>mobtyper<span class="kw">`</span> <span class="ex">did</span> not, so the same real isolate could appear as two different node names — one via its plasmid edges, one via its ICE edges. Fixed with a shared <span class="kw">`</span>normalise_isolate<span class="er">(</span><span class="kw">)`</span> <span class="ex">helper</span> applied everywhere an isolate name is constructed, stripping the species suffix and anything after it regardless of which pipeline stage produced the string.</span>
-<span id="cb40-1077"><a href="#cb40-1077" aria-hidden="true" tabindex="-1"></a><span class="ex">2.</span> <span class="pp">**</span>Legend label mismatch.<span class="pp">**</span> <span class="kw">`</span>scale_edge_colour_manual<span class="er">(</span><span class="ex">labels</span> = ...<span class="kw">)`</span> <span class="ex">was</span> given an unnamed positional vector, which silently swaps which label is shown against which colour if ggplot<span class="st">&#39;s internal factor-level ordering doesn&#39;</span>t match the order the labels happen to be listed in. Fixed with a named vector keyed to the actual <span class="kw">`</span>edge_type<span class="kw">`</span> <span class="ex">values</span> <span class="er">(</span><span class="kw">`</span><span class="st">&quot;plasmid&quot;</span><span class="kw">`</span>, <span class="kw">`</span><span class="st">&quot;ICE&quot;</span><span class="kw">`)</span><span class="bu">.</span></span>
+<span id="cb40-1076"><a href="#cb40-1076" aria-hidden="true" tabindex="-1"></a><span class="ex">1.</span> <span class="pp">**</span>Duplicate node bug.<span class="pp">**</span> Isolate labels derived from ICE BLAST hits retained suffix cruft <span class="er">(</span><span class="ex">e.g.</span> <span class="kw">`</span><span class="ex">_chromosome_merged</span><span class="kw">`)</span> <span class="ex">that</span> labels derived from <span class="kw">`</span><span class="ex">mobtyper</span><span class="kw">`</span> did not, so the same real isolate could appear as two different node names — one via its plasmid edges, one via its ICE edges. Fixed with a shared <span class="kw">`</span><span class="fu">normalise_isolate()</span><span class="kw">`</span> helper applied everywhere an isolate name is constructed, stripping the species suffix and anything after it regardless of which pipeline stage produced the string.</span>
+<span id="cb40-1077"><a href="#cb40-1077" aria-hidden="true" tabindex="-1"></a><span class="ex">2.</span> <span class="pp">**</span>Legend label mismatch.<span class="pp">**</span> <span class="kw">`</span><span class="ex">scale_edge_colour_manual</span><span class="er">(</span><span class="ex">labels</span> = ...<span class="kw">)`</span> was given an unnamed positional vector, which silently swaps which label is shown against which colour if ggplot<span class="st">&#39;s internal factor-level ordering doesn&#39;</span>t match the order the labels happen to be listed in. Fixed with a named vector keyed to the actual <span class="kw">`</span><span class="ex">edge_type</span><span class="kw">`</span> values <span class="er">(</span><span class="kw">`</span><span class="st">&quot;plasmid&quot;</span><span class="kw">`</span>, <span class="kw">`</span><span class="st">&quot;ICE&quot;</span><span class="kw">`)</span><span class="bu">.</span></span>
 <span id="cb40-1078"><a href="#cb40-1078" aria-hidden="true" tabindex="-1"></a><span class="ex">:::</span></span>
 <span id="cb40-1079"><a href="#cb40-1079" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb40-1080"><a href="#cb40-1080" aria-hidden="true" tabindex="-1"></a><span class="co">## Step 7: Summary table</span></span>
 <span id="cb40-1081"><a href="#cb40-1081" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb40-1082"><a href="#cb40-1082" aria-hidden="true" tabindex="-1"></a><span class="ex">Aggregate</span> the quality-filtered AMR results <span class="er">(</span><span class="ex">@sec-amr-plasmid</span><span class="kw">)</span> <span class="ex">into</span> one combined file, then cross-reference against the inter-species clusters:</span>
 <span id="cb40-1083"><a href="#cb40-1083" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-1084"><a href="#cb40-1084" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span>{.bash filename=<span class="st">&quot;scripts/aggregate_amr_filtered.sh&quot;</span>}</span>
+<span id="cb40-1084"><a href="#cb40-1084" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span><span class="ex">{.bash</span> filename=<span class="st">&quot;scripts/aggregate_amr_filtered.sh&quot;</span>}</span>
 <span id="cb40-1085"><a href="#cb40-1085" aria-hidden="true" tabindex="-1"></a><span class="co">#!/bin/bash</span></span>
 <span id="cb40-1086"><a href="#cb40-1086" aria-hidden="true" tabindex="-1"></a><span class="co"># Aggregate the per-isolate quality-filtered AMRFinderPlus results</span></span>
 <span id="cb40-1087"><a href="#cb40-1087" aria-hidden="true" tabindex="-1"></a><span class="co"># (05_amr_filtered/*.tsv, produced by amr_qc_filter.sh) into one combined</span></span>
@@ -5863,7 +5863,7 @@ Important
 <span id="cb40-1103"><a href="#cb40-1103" aria-hidden="true" tabindex="-1"></a><span class="fu">wc</span> <span class="at">-l</span> <span class="st">&quot;</span><span class="va">$OUT</span><span class="st">&quot;</span></span>
 <span id="cb40-1104"><a href="#cb40-1104" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span></span>
 <span id="cb40-1105"><a href="#cb40-1105" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-1106"><a href="#cb40-1106" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span>{.r filename=<span class="st">&quot;scripts/step7_summary_table.R&quot;</span>}</span>
+<span id="cb40-1106"><a href="#cb40-1106" aria-hidden="true" tabindex="-1"></a><span class="kw">```</span><span class="ex">{.r</span> filename=<span class="st">&quot;scripts/step7_summary_table.R&quot;</span>}</span>
 <span id="cb40-1107"><a href="#cb40-1107" aria-hidden="true" tabindex="-1"></a><span class="co"># Summary table of inter-species MGE-sharing clusters cross-referenced with</span></span>
 <span id="cb40-1108"><a href="#cb40-1108" aria-hidden="true" tabindex="-1"></a><span class="co"># their carried AMR genes.</span></span>
 <span id="cb40-1109"><a href="#cb40-1109" aria-hidden="true" tabindex="-1"></a><span class="co">#</span></span>
@@ -5877,7 +5877,7 @@ Important
 <span id="cb40-1117"><a href="#cb40-1117" aria-hidden="true" tabindex="-1"></a><span class="ex">library</span><span class="er">(</span><span class="ex">dplyr</span><span class="kw">)</span></span>
 <span id="cb40-1118"><a href="#cb40-1118" aria-hidden="true" tabindex="-1"></a><span class="ex">library</span><span class="er">(</span><span class="ex">readr</span><span class="kw">)</span></span>
 <span id="cb40-1119"><a href="#cb40-1119" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb40-1120"><a href="#cb40-1120" aria-hidden="true" tabindex="-1"></a><span class="co"># `inter_species` comes from identify_inter_species_clusters.R (run earlier</span></span>
+<span id="cb40-1120"><a href="#cb40-1120" aria-hidden="true" tabindex="-1"></a><span class="co"># </span><span class="kw">`</span>inter_species<span class="kw">`</span> <span class="ex">comes</span> from identify_inter_species_clusters.R <span class="er">(</span><span class="ex">run</span> earlier</span>
 <span id="cb40-1121"><a href="#cb40-1121" aria-hidden="true" tabindex="-1"></a><span class="co"># in the same session, or re-load its saved CSV output here if starting fresh):</span></span>
 <span id="cb40-1122"><a href="#cb40-1122" aria-hidden="true" tabindex="-1"></a><span class="co"># inter_species &lt;- read_csv(&quot;~/shared-team/ronnie.dir/07_mge_sharing/02_mob_cluster/inter_species_clusters.csv&quot;)</span></span>
 <span id="cb40-1123"><a href="#cb40-1123" aria-hidden="true" tabindex="-1"></a></span>

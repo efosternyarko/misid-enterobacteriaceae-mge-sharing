@@ -20,7 +20,7 @@ with open(out_fasta, "w") as out:
         chr_fasta = None
         isolate_label = None
         for d in os.listdir(recon_dir):
-            if isolate_base in d:
+            if d in isolate_base:
                 candidate = os.path.join(recon_dir, d, "chromosome.fasta")
                 if os.path.exists(candidate):
                     chr_fasta = candidate
